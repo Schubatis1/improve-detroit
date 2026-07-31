@@ -40,6 +40,8 @@ window.APP_CONFIG = {
             'Bicycle lane obstruction near {{ADDRESS}}. Vehicle is illegally parked, posing a safety hazard to non-motorized transportation.',
             'Vehicle blocking designated bike lane near {{ADDRESS}}, violating local traffic codes and Mich. Admin. Code R. 28.1322.',
             'Traffic code violation at {{ADDRESS}}: Vehicle illegally parked in bicycle lane, obstructing the designated path.',
+            'Vehicle illegally parked in bike lane near {{ADDRESS}}, violating Detroit City Code Sec. 55-6-7(a)(13) and obstructing bicycle traffic.',
+            'Bicycle lane obstruction at {{ADDRESS}}. Vehicle is illegally stopped/parked in violation of Detroit City Code Sec. 55-6-7.',
         ],
     },
 
