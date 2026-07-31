@@ -65,6 +65,7 @@ window.APP_CONFIG = {
     // first matching geofence wins if more than one overlaps.
     geofences: [
         {
+            // Sexy Steak's valet at the GAR Building, 1942 Grand River.
             id: 'gar-building',
             name: 'GAR Building valet staging',
             lat: 42.33494474658147,
@@ -72,8 +73,11 @@ window.APP_CONFIG = {
             radiusMeters: 100,
             workflow: {
                 descriptions: [
-                    'Valet operator at GAR building is inappropriately using Grand River bicycle lane for valet staging.',
+                    'Valet operator at the GAR Building (Sexy Steak, 1942 Grand River) is using the Grand River bicycle lane as a staging area, blocking the bike lane. This is a recurring problem -- see previous {{PRIOR_COMPLAINTS}}.',
                 ],
+                // Append this report's issue number here once it's submitted
+                // so the next report cites it too -- grows by one each time.
+                priorComplaintIds: ['22083192', '22184122', '22211206'],
             },
         },
     ],
