@@ -288,6 +288,26 @@
         const GAR_BUILDING_RADIUS_M = 100;
         const GAR_BUILDING_DESCRIPTION = 'Valet operator at GAR building is inappropriately using Grand River bicycle lane for valet staging.';
 
+        // Rotated randomly per new issue so repeat filings to SeeClickFix don't
+        // all read as identical copy-pasted text.
+        const BIKE_LANE_DESCRIPTION_TEMPLATES = [
+            'Vehicle illegally parked in bike lane near {{ADDRESS}}, obstructing bicycle traffic in violation of Mich. Admin. Code R. 28.1322.',
+            'Bike lane obstruction reported at {{ADDRESS}}. Vehicle is impeding the active lane and pushing cyclists into motor traffic.',
+            'Illegal parking in dedicated bicycle lane at {{ADDRESS}}. Path of travel is obstructed.',
+            'Active traffic hazard at {{ADDRESS}}: Vehicle parked in designated bike lane, violating MCL 257.676b (impeding traffic).',
+            'Bicycle lane obstruction near {{ADDRESS}}. Vehicle is illegally stopped/parked, impeding cyclist right-of-way.',
+            'Cyclist safety concern at {{ADDRESS}}: Vehicle parked in the bike lane in violation of Mich. Admin. Code R. 28.1322, compromising the travel lane.',
+            'Illegal vehicle obstruction in bike lane at {{ADDRESS}}. Requesting enforcement under MCL 257.676b to clear the travel lane.',
+            'Bicycle lane obstruction near {{ADDRESS}}. Vehicle is illegally parked, posing a safety hazard to non-motorized transportation.',
+            'Vehicle blocking designated bike lane near {{ADDRESS}}, violating local traffic codes and Mich. Admin. Code R. 28.1322.',
+            'Traffic code violation at {{ADDRESS}}: Vehicle illegally parked in bicycle lane, obstructing the designated path.',
+        ];
+
+        function randomBikeLaneDescription(address) {
+            const template = BIKE_LANE_DESCRIPTION_TEMPLATES[Math.floor(Math.random() * BIKE_LANE_DESCRIPTION_TEMPLATES.length)];
+            return template.replace('{{ADDRESS}}', address);
+        }
+
         function distanceMeters(lat1, lng1, lat2, lng2) {
             const R = 6371000;
             const toRad = (deg) => (deg * Math.PI) / 180;
@@ -576,7 +596,7 @@
                 // Pre-fill the editor; every field stays fully mutable before submission.
                 item.els.address.value = address;
                 item.els.summary.value = 'Vehicle Blocking Bike Lane';
-                item.els.description.value = nearGarBuilding ? GAR_BUILDING_DESCRIPTION : `Vehicle parked in bicycle lane at ${address}`;
+                item.els.description.value = nearGarBuilding ? GAR_BUILDING_DESCRIPTION : randomBikeLaneDescription(address);
                 item.els.nature.value = pickDefaultNatureValue(natureValues);
                 item.els.timing.value = photoTimeString;
 
