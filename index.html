@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>Clear the Lane (v3.2.4)</title>
+    <title>Clear the Lane (v3.2.5)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -259,7 +259,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">Clear the Lane</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.2.4</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.2.5</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -293,14 +293,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.2.4)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.2.5)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.2.4)...
+            App initialized (v3.2.5)...
         </div>
     </div>
 
@@ -311,7 +311,7 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.2.4';
+        const APP_VERSION = '3.2.5';
         const CONFIG = window.APP_CONFIG;
 
         function distanceMeters(lat1, lng1, lat2, lng2) {
@@ -800,11 +800,28 @@
                 // upload), which is known to handle binary POST bodies fine.
                 const targetUrl = 'https://api.platerecognizer.com/v1/plate-reader/';
                 const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
-                const response = await fetch(proxyUrl, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Token ${CONFIG.plateRecognizerApiKey}` },
-                    body: formData
-                });
+
+                // A batch upload fires every photo's recognizePlate() at once,
+                // which routinely trips Plate Recognizer's per-second rate
+                // limit (HTTP 429) on the 2nd+ photo. Retry using the wait
+                // time the API itself reports ("Expected available in Xs")
+                // rather than failing the whole card over a transient throttle.
+                const maxAttempts = 4;
+                let response;
+                for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                    response = await fetch(proxyUrl, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Token ${CONFIG.plateRecognizerApiKey}` },
+                        body: formData
+                    });
+
+                    if (response.status !== 429 || attempt === maxAttempts) break;
+
+                    const throttleBody = await response.clone().json().catch(() => null);
+                    const waitSeconds = Number(throttleBody?.detail?.match(/[\d.]+/)?.[0]) || attempt;
+                    logToConsole(`[${item.file.name}] Plate Recognizer rate-limited -- retrying in ${waitSeconds}s (attempt ${attempt + 1}/${maxAttempts})...`);
+                    await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
+                }
 
                 if (!response.ok) {
                     const errText = await response.text();
