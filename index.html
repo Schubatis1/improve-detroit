@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park Here (v3.2.6)</title>
+    <title>You Can't Park Here (v3.3.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -259,7 +259,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park Here</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.2.6</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.3.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -276,7 +276,18 @@
     <div id="queueContainer"></div>
 
     <!-- Batch submit bar (shown once at least one photo is ready) -->
-    <div id="submitAllBar" class="hidden mb-6">
+    <div id="submitAllBar" class="hidden mb-6 flex flex-col gap-2">
+        <!-- Only relevant with 2+ ready photos -- shown/hidden by updateSubmitAllVisibility -->
+        <div id="batchModeToggle" class="hidden bg-white rounded-lg shadow-sm p-3 flex flex-col gap-2 text-sm text-detroit-dark">
+            <label class="flex items-center gap-2">
+                <input type="radio" name="batchMode" value="separate" checked>
+                Submit as separate reports (one ticket per photo)
+            </label>
+            <label class="flex items-center gap-2">
+                <input type="radio" name="batchMode" value="combined">
+                Combine into one report (lists every plate in the vehicle field)
+            </label>
+        </div>
         <button id="submitAllBtn"
                 class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-4 rounded-lg shadow hover:bg-detroit-dark transition">
             Submit All Queued Photos
@@ -293,14 +304,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.2.6)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.3.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.2.6)...
+            App initialized (v3.3.0)...
         </div>
     </div>
 
@@ -311,7 +322,7 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.2.6';
+        const APP_VERSION = '3.3.0';
         const CONFIG = window.APP_CONFIG;
 
         function distanceMeters(lat1, lng1, lat2, lng2) {
@@ -397,6 +408,7 @@
         const photoInput = document.getElementById('photoInput');
         const queueContainer = document.getElementById('queueContainer');
         const submitAllBar = document.getElementById('submitAllBar');
+        const batchModeToggle = document.getElementById('batchModeToggle');
         const submitAllBtn = document.getElementById('submitAllBtn');
         const historyList = document.getElementById('historyList');
 
@@ -872,18 +884,34 @@
             }
         }
 
+        function getBatchMode() {
+            const checked = document.querySelector('input[name="batchMode"]:checked');
+            return checked ? checked.value : 'separate';
+        }
+
         function updateSubmitAllVisibility() {
             const pendingCount = queue.filter((i) => i.status === 'ready' || i.status === 'error').length;
             submitAllBar.classList.toggle('hidden', pendingCount === 0);
-            submitAllBtn.textContent = `Submit All Queued Photos (${pendingCount})`;
+            batchModeToggle.classList.toggle('hidden', pendingCount < 2);
+            submitAllBtn.textContent = getBatchMode() === 'combined' && pendingCount >= 2
+                ? `Submit Combined Report (${pendingCount} photos)`
+                : `Submit All Queued Photos (${pendingCount})`;
         }
+        document.querySelectorAll('input[name="batchMode"]').forEach((radio) => {
+            radio.addEventListener('change', updateSubmitAllVisibility);
+        });
 
         submitAllBtn.addEventListener('click', async () => {
             submitAllBtn.disabled = true;
             const pending = queue.filter((i) => i.status === 'ready' || i.status === 'error');
-            logToConsole(`Submitting ${pending.length} queued photo(s)...`);
-            for (const item of pending) {
-                await submitItem(item);
+            if (getBatchMode() === 'combined' && pending.length > 1) {
+                logToConsole(`Submitting ${pending.length} queued photo(s) as one combined report...`);
+                await submitCombinedItems(pending);
+            } else {
+                logToConsole(`Submitting ${pending.length} queued photo(s) separately...`);
+                for (const item of pending) {
+                    await submitItem(item);
+                }
             }
             submitAllBtn.disabled = false;
             updateSubmitAllVisibility();
@@ -972,6 +1000,95 @@
                 item.els.submitBtn.disabled = false;
                 item.els.submitBtn.textContent = 'Try Again';
                 item.els.submitBtn.classList.replace('bg-slate-400', 'bg-detroit-teal');
+            }
+            updateSubmitAllVisibility();
+        }
+
+        // Files one SeeClickFix ticket covering every item in a batch, instead
+        // of one ticket per photo. A ticket only carries one lat/lng/address
+        // and one attached photo, so the first item in the batch supplies
+        // those; every item's detected plate is listed in the vehicle/plate
+        // question so the ticket still documents every vehicle involved.
+        async function submitCombinedItems(items) {
+            if (items.length === 0) return;
+            const primary = items[0];
+
+            items.forEach((item) => {
+                item.status = 'submitting';
+                item.els.submitBtn.disabled = true;
+                item.els.submitBtn.textContent = 'Submitting...';
+                item.els.submitBtn.classList.replace('bg-detroit-teal', 'bg-slate-400');
+                item.els.itemMsg.textContent = 'Sending combined report to Improve Detroit...';
+                item.els.itemMsg.className = 'text-center text-xs font-medium text-detroit-teal';
+            });
+
+            const pos = primary.marker ? primary.marker.getLatLng() : { lat: primary.lat, lng: primary.lng };
+            const address = primary.els.address.value.trim();
+            const summary = primary.els.summary.value.trim();
+            const description = primary.els.description.value.trim();
+            const nature = primary.els.nature.value === '__custom__' ? primary.els.natureCustom.value.trim() : primary.els.nature.value;
+            const timing = primary.els.timing.value.trim();
+            const plates = items.map((item) => item.els.plate.value.trim()).filter(Boolean);
+
+            const formData = new FormData();
+            formData.append('lat', pos.lat);
+            formData.append('lng', pos.lng);
+            formData.append('address', address);
+            formData.append('request_type_id', CONFIG.seeClickFix.requestTypeId);
+            formData.append('answers[summary]', summary);
+            formData.append('answers[description]', description);
+            formData.append(`answers[${CONFIG.seeClickFix.natureQuestionId}]`, nature);
+            formData.append(`answers[${CONFIG.seeClickFix.timingQuestionId}]`, timing);
+            if (primary.vehicleQuestionId && plates.length > 0) {
+                formData.append(`answers[${primary.vehicleQuestionId}]`, plates.join(', '));
+            }
+            formData.append('answers[issue_image]', primary.file);
+
+            try {
+                logToConsole(`Dispatching combined POST request for ${items.length} photo(s) via CORS proxy...`);
+                const targetUrl = 'https://seeclickfix.com/api/v2/issues';
+                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+
+                const response = await fetch(proxyUrl, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` },
+                    body: formData
+                });
+
+                logToConsole(`Combined submission response: ${response.status} ${response.statusText} (content-type: ${response.headers.get('content-type')})`);
+
+                if (!response.ok) {
+                    const errText = await response.text();
+                    throw new Error(`SeeClickFix API Error ${response.status}: ${errText}`);
+                }
+
+                const data = await response.json();
+                logToConsole(`Combined submission success! Issue ID: ${data.id}`);
+
+                items.forEach((item) => {
+                    item.status = 'success';
+                    item.issueId = data.id;
+                    item.els.itemMsg.textContent = `Submitted in combined report — Issue #${data.id}`;
+                    item.els.itemMsg.className = 'text-center text-xs font-bold text-detroit-dark';
+                    item.els.submitBtn.textContent = 'Submitted ✓';
+                });
+
+                try {
+                    await addToHistory(primary, data.id, address);
+                } catch (historyErr) {
+                    logToConsole(`Ticket #${data.id} was submitted, but local history couldn't be saved: ${historyErr instanceof Error ? historyErr.message : historyErr}`, true);
+                }
+
+            } catch (err) {
+                logToConsole(err, true);
+                items.forEach((item) => {
+                    item.status = 'error';
+                    item.els.itemMsg.textContent = 'Failed — check debug console';
+                    item.els.itemMsg.className = 'text-center text-xs font-medium text-red-600';
+                    item.els.submitBtn.disabled = false;
+                    item.els.submitBtn.textContent = 'Try Again';
+                    item.els.submitBtn.classList.replace('bg-slate-400', 'bg-detroit-teal');
+                });
             }
             updateSubmitAllVisibility();
         }
