@@ -75,9 +75,14 @@ window.APP_CONFIG = {
                 descriptions: [
                     'Valet operator at the GAR Building (Sexy Steak, 1942 Grand River) is using the Grand River bicycle lane as a staging area, blocking the bike lane. This is a recurring problem -- see previous {{PRIOR_COMPLAINTS}}.',
                 ],
-                // Append this report's issue number here once it's submitted
-                // so the next report cites it too -- grows by one each time.
-                priorComplaintIds: ['22083192', '22184122', '22211206'],
+                // priorComplaintIds is NOT set here -- it's computed at
+                // runtime in index.html from every synced history entry
+                // whose geofenceId matches this geofence's id ('gar-building'),
+                // so the citation list grows automatically as reports are
+                // submitted from any device, with no config/code change
+                // needed. See getPriorComplaintIdsForGeofence() and
+                // scripts/tag-geofence.js (for backfilling old reports that
+                // predate this app version and so were never auto-tagged).
             },
         },
     ],
