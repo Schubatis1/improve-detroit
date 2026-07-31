@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>Clear the Lane (v3.2.3)</title>
+    <title>Clear the Lane (v3.2.4)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -70,6 +70,14 @@
         <button id="debugToggleBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Show Debug Console
         </button>
+    </div>
+
+    <!-- Fullscreen photo viewer: tap a thumbnail to open the full-resolution
+         photo here so a license plate is actually readable. Pinch-to-zoom
+         works natively since the viewport meta tag doesn't disable scaling. -->
+    <div id="photoLightbox" class="hidden fixed inset-0 bg-black z-[60] flex items-center justify-center">
+        <button id="lightboxCloseBtn" aria-label="Close photo" class="absolute top-4 right-4 text-white text-4xl leading-none z-10">&times;</button>
+        <img id="lightboxImg" src="" alt="Full-size photo" class="max-w-full max-h-full">
     </div>
 
     <div class="relative overflow-hidden bg-white rounded-xl shadow-md p-6 mb-6 mt-4 text-center">
@@ -251,7 +259,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">Clear the Lane</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.2.3</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.2.4</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -285,11 +293,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.2.3)</p>
-            <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.2.4)</p>
+            <div class="flex gap-3">
+                <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
+                <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
+            </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.2.3)...
+            App initialized (v3.2.4)...
         </div>
     </div>
 
@@ -300,7 +311,7 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.2.3';
+        const APP_VERSION = '3.2.4';
         const CONFIG = window.APP_CONFIG;
 
         function distanceMeters(lat1, lng1, lat2, lng2) {
@@ -417,6 +428,36 @@
             closeMenu();
         });
 
+        const debugCopyBtn = document.getElementById('debugCopyBtn');
+        const debugLog = document.getElementById('debugLog');
+        debugCopyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(debugLog.innerText);
+                const original = debugCopyBtn.textContent;
+                debugCopyBtn.textContent = 'Copied!';
+                setTimeout(() => { debugCopyBtn.textContent = original; }, 1500);
+            } catch (err) {
+                logToConsole(`Could not copy debug log: ${err instanceof Error ? err.message : err}`, true);
+            }
+        });
+
+        // Fullscreen photo viewer
+        const photoLightbox = document.getElementById('photoLightbox');
+        const lightboxImg = document.getElementById('lightboxImg');
+        const lightboxCloseBtn = document.getElementById('lightboxCloseBtn');
+        function openLightbox(src) {
+            lightboxImg.src = src;
+            photoLightbox.classList.remove('hidden');
+        }
+        function closeLightbox() {
+            photoLightbox.classList.add('hidden');
+            lightboxImg.src = '';
+        }
+        lightboxCloseBtn.addEventListener('click', closeLightbox);
+        photoLightbox.addEventListener('click', (e) => {
+            if (e.target === photoLightbox) closeLightbox();
+        });
+
         let queue = [];
         let itemCounter = 0;
         function nextId() { return `item-${++itemCounter}-${Date.now()}`; }
@@ -518,7 +559,7 @@
             wrapper.dataset.itemId = id;
             wrapper.innerHTML = `
                 <div class="flex gap-3 items-start">
-                    <img src="${previewUrl}" class="w-20 h-20 object-cover rounded-lg shadow-sm flex-shrink-0" alt="Selected photo">
+                    <img data-role="thumbnail" src="${previewUrl}" class="w-20 h-20 object-cover rounded-lg shadow-sm flex-shrink-0 cursor-zoom-in" alt="Selected photo -- tap to view full-size">
                     <div class="flex-1 min-w-0">
                         <p class="text-xs text-slate-400 truncate">${file.name}</p>
                         <p class="text-xs font-bold uppercase mt-1 text-detroit-teal" data-role="statusBadge">Extracting metadata...</p>
@@ -573,6 +614,7 @@
             queueContainer.appendChild(wrapper);
 
             item.els = {
+                thumbnail: wrapper.querySelector('[data-role="thumbnail"]'),
                 statusBadge: wrapper.querySelector('[data-role="statusBadge"]'),
                 fields: wrapper.querySelector('[data-role="fields"]'),
                 address: wrapper.querySelector('[data-role="address"]'),
@@ -592,6 +634,7 @@
                 item.els.natureCustom.classList.toggle('hidden', item.els.nature.value !== '__custom__');
             });
             item.els.submitBtn.addEventListener('click', () => submitItem(item));
+            item.els.thumbnail.addEventListener('click', () => openLightbox(previewUrl));
 
             queue.push(item);
             processQueueItem(item);
@@ -711,6 +754,31 @@
             item.marker = marker;
         }
 
+        // Plate Recognizer rejects uploads over 3.5MB and recommends around
+        // 1920x1080 -- phone photos routinely come in well above both (8+MB
+        // at full sensor resolution). Downscale a copy just for this call;
+        // the original full-resolution file is untouched and is still what
+        // gets submitted to SeeClickFix.
+        async function downscaleForPlateRecognizer(file, maxDimension = 1920, quality = 0.85) {
+            const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+            const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+            const width = Math.round(bitmap.width * scale);
+            const height = Math.round(bitmap.height * scale);
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+            bitmap.close();
+
+            return new Promise((resolve, reject) => {
+                canvas.toBlob((blob) => {
+                    if (blob) resolve(blob);
+                    else reject(new Error('Could not downscale image for plate recognition'));
+                }, 'image/jpeg', quality);
+            });
+        }
+
         // Best-effort plate OCR via Plate Recognizer. Runs in parallel with the
         // rest of processQueueItem rather than blocking it -- a slow or failed
         // OCR call shouldn't hold up the card becoming ready to submit. Never
@@ -718,9 +786,11 @@
         // pre-fills the (already editable) plate field, nothing is auto-submitted.
         async function recognizePlate(item) {
             try {
-                logToConsole(`[${item.file.name}] Sending photo to Plate Recognizer...`);
+                logToConsole(`[${item.file.name}] Downscaling photo for Plate Recognizer...`);
+                const upload = await downscaleForPlateRecognizer(item.file);
+                logToConsole(`[${item.file.name}] Sending photo to Plate Recognizer (${Math.round(upload.size / 1024)}KB)...`);
                 const formData = new FormData();
-                formData.append('upload', item.file);
+                formData.append('upload', upload, item.file.name);
 
                 // Plate Recognizer's API doesn't send CORS headers for browser
                 // requests -- called directly, the fetch fails at the network
