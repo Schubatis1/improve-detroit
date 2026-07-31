@@ -1,0 +1,10 @@
+{
+  "name": "improve-detroit",
+  "private": true,
+  "scripts": {
+    "import-history": "node scripts/import-seeclickfix-history.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0"
+  }
+}

@@ -23,6 +23,19 @@ window.APP_CONFIG = {
 
     historyKey: 'clearTheLaneHistory',
 
+    // Submission history syncs to this Firestore project (anonymous auth,
+    // one document per issue under users/{uid}/history) so it's shared
+    // across every device you open the app on. localStorage is kept only
+    // as an offline read cache -- see persistHistory()/loadHistoryFromStorage().
+    firebase: {
+        apiKey: 'AIzaSyDomyqjke15Jd_C8JQTzuEaCSRM3XGULe4',
+        authDomain: 'improve-detroit.firebaseapp.com',
+        projectId: 'improve-detroit',
+        storageBucket: 'improve-detroit.firebasestorage.app',
+        messagingSenderId: '587325235412',
+        appId: '1:587325235412:web:ec6eedf95007ca63ea5b41',
+    },
+
     // Applied to every photo that doesn't match a more specific geofence
     // below. `descriptions` is a pool of message templates -- one is chosen
     // at random per photo. Use {{ADDRESS}} as a placeholder for the

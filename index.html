@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park Here (v3.3.0)</title>
+    <title>You Can't Park Here (v3.5.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -34,6 +34,11 @@
          config.js to customize -- it's the only file that should need
          changes for a new geofence, plate rule, or message wording. -->
     <script src="config.js"></script>
+    <!-- Firebase (compat build, so it works as a plain global like the rest
+         of this no-build page) -- syncs submission history to Firestore. -->
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
     <!-- EXIF parser to pull GPS and Timestamp from photos client-side -->
     <script src="https://cdn.jsdelivr.net/npm/exifr/dist/full.umd.js"></script>
     <!-- Leaflet for the draggable map pin fine-tuner -->
@@ -70,6 +75,9 @@
         <button id="debugToggleBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Show Debug Console
         </button>
+        <button id="signOutBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
+            Sign Out
+        </button>
     </div>
 
     <!-- Fullscreen photo viewer: tap a thumbnail to open the full-resolution
@@ -80,6 +88,26 @@
         <img id="lightboxImg" src="" alt="Full-size photo" class="max-w-full max-h-full">
     </div>
 
+    <!-- Sign-in gate: the app is unusable (and Firestore denies all reads
+         and writes) until Google sign-in succeeds with the one allowed
+         account -- see firestore.rules. Shown by default; hidden once
+         onAuthStateChanged confirms a signed-in, authorized user. -->
+    <div id="signInScreen" class="flex-1 flex flex-col items-center justify-center text-center gap-4 py-12">
+        <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park Here</h1>
+        <p class="text-sm text-slate-500 max-w-xs">Sign in to view and submit reports. Your submission history syncs across every device you're signed into.</p>
+        <button id="googleSignInBtn" class="bg-white border border-slate-300 text-detroit-dark font-semibold py-3 px-6 rounded-lg shadow hover:bg-slate-50 transition flex items-center gap-2">
+            <svg class="w-5 h-5" viewBox="0 0 48 48" aria-hidden="true">
+                <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l6-6C34.1 5.1 29.3 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21 21-9.4 21-21c0-1.4-.1-2.7-.4-3.5z"/>
+                <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.4 18.9 12 24 12c3.1 0 5.8 1.1 8 3l6-6C34.1 5.1 29.3 3 24 3 15.9 3 8.9 7.6 6.3 14.7z"/>
+                <path fill="#4CAF50" d="M24 45c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 36.4 26.7 37 24 37c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9 41.4 15.9 45 24 45z"/>
+                <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.2-4.1 5.6l6.2 5.2C40.8 36.4 45 30.7 45 24c0-1.4-.1-2.7-.4-3.5z"/>
+            </svg>
+            Sign in with Google
+        </button>
+        <p id="signInStatus" class="text-xs text-red-500 max-w-xs"></p>
+    </div>
+
+    <div id="appContent" class="hidden">
     <div class="relative overflow-hidden bg-white rounded-xl shadow-md p-6 mb-6 mt-4 text-center">
         <svg id="rays-flourish" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 535.63 535.76" class="absolute -top-16 -right-16 w-56 h-56 opacity-[0.12] pointer-events-none select-none rotate-12" aria-hidden="true">
   <defs>
@@ -259,7 +287,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park Here</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.3.0</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.5.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -304,16 +332,17 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.3.0)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.5.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.3.0)...
+            App initialized (v3.5.0)...
         </div>
     </div>
+    </div> <!-- #appContent -->
 
     <script>
         // ==========================================
@@ -322,8 +351,75 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.3.0';
+        const APP_VERSION = '3.5.0';
         const CONFIG = window.APP_CONFIG;
+
+        // Firestore is the source of truth for submission history. Auth is
+        // Google Sign-In rather than anonymous, so the same uid (and
+        // therefore the same history) follows this account across every
+        // device -- anonymous auth gives each browser profile its own
+        // throwaway uid, which doesn't sync anything. Firestore rules
+        // additionally restrict reads/writes to one allowed email; the
+        // ALLOWED_EMAIL check here is just for a faster/friendlier UI
+        // response, not the real security boundary.
+        const ALLOWED_EMAIL = 'aschubatis@gmail.com';
+        let currentUid = null;
+        firebase.initializeApp(CONFIG.firebase);
+        const firebaseAuth = firebase.auth();
+        const firestoreDb = firebase.firestore();
+        const googleProvider = new firebase.auth.GoogleAuthProvider();
+
+        // Resolves once with the signed-in, authorized uid; rejects if the
+        // user signs out or the wrong account is used. History code awaits
+        // this instead of assuming sign-in already happened.
+        let resolveHistorySignedIn, rejectHistorySignedIn;
+        let historySignedIn = new Promise((resolve, reject) => {
+            resolveHistorySignedIn = resolve;
+            rejectHistorySignedIn = reject;
+        });
+
+        function historyCollection(uid) {
+            return firestoreDb.collection('users').doc(uid).collection('history');
+        }
+
+        const signInScreen = document.getElementById('signInScreen');
+        const appContent = document.getElementById('appContent');
+        const signInStatus = document.getElementById('signInStatus');
+
+        firebaseAuth.onAuthStateChanged(async (user) => {
+            if (user && user.email === ALLOWED_EMAIL) {
+                signInScreen.classList.add('hidden');
+                appContent.classList.remove('hidden');
+                currentUid = user.uid;
+                resolveHistorySignedIn(user.uid);
+                return;
+            }
+            if (user && user.email !== ALLOWED_EMAIL) {
+                signInStatus.textContent = `${user.email} isn't authorized for this app. Signed out.`;
+                await firebaseAuth.signOut();
+                return;
+            }
+            // Signed out: reset the wait-for-sign-in promise for next time.
+            appContent.classList.add('hidden');
+            signInScreen.classList.remove('hidden');
+            historySignedIn = new Promise((resolve, reject) => {
+                resolveHistorySignedIn = resolve;
+                rejectHistorySignedIn = reject;
+            });
+        });
+
+        document.getElementById('googleSignInBtn').addEventListener('click', async () => {
+            signInStatus.textContent = '';
+            try {
+                await firebaseAuth.signInWithPopup(googleProvider);
+            } catch (err) {
+                signInStatus.textContent = `Sign-in failed: ${err instanceof Error ? err.message : err}`;
+            }
+        });
+
+        document.getElementById('signOutBtn').addEventListener('click', () => {
+            firebaseAuth.signOut();
+        });
 
         function distanceMeters(lat1, lng1, lat2, lng2) {
             const R = 6371000;
@@ -485,6 +581,7 @@
 
         logToConsole(`Running version ${APP_VERSION}`);
         renderHistory();
+        initHistorySync();
 
         // Fetch the real picklist options for request type 22880 once, up front,
         // instead of guessing answer strings. Falls back to the one known-good
@@ -1096,32 +1193,54 @@
         // ==========================================
         // Submission History & Receipt Tracker
         // ==========================================
-        // historyCache is the source of truth for what's rendered. localStorage
-        // is best-effort persistence layered on top of it, not a passthrough --
-        // some browser contexts (private/incognito mode, in-app WebViews like
-        // Gmail's, or a page opened as a local file:// rather than hosted) cap
-        // localStorage at zero and throw QuotaExceededError on the very first
-        // write. Reading straight from localStorage on every render meant a
-        // just-submitted ticket wouldn't show up at all in those contexts, even
-        // seconds after a confirmed 201 -- now it always shows for the current
-        // session, and persists across reloads only where storage allows it.
-        function persistHistory() {
+        // Firestore (users/{uid}/history) is the source of truth, kept in
+        // sync in real time via onSnapshot -- so history shows up the same
+        // on every device signed into this browser's anonymous identity.
+        // localStorage is a best-effort read cache layered underneath it,
+        // used only so history still shows instantly on load and while
+        // offline; it's overwritten by the next Firestore snapshot as soon
+        // as one arrives. Some browser contexts (private/incognito mode,
+        // in-app WebViews like Gmail's, or a page opened as a local file://
+        // rather than hosted) cap localStorage at zero and throw
+        // QuotaExceededError on the very first write -- caching is
+        // best-effort and silently gives up in that case.
+
+        function cacheHistoryLocally() {
             const attempt = historyCache.slice();
             while (true) {
                 try {
                     localStorage.setItem(CONFIG.historyKey, JSON.stringify(attempt));
-                    if (attempt.length < historyCache.length) {
-                        logToConsole(`Local storage only fit ${attempt.length} of ${historyCache.length} history entries; all still show for this session.`, true);
-                    }
                     return;
                 } catch (err) {
-                    if (attempt.length === 0) {
-                        logToConsole('Local storage is unavailable (private browsing, a restricted WebView, or a file:// page) -- history shows for this session but will not persist after reload.', true);
-                        return;
-                    }
+                    if (attempt.length === 0) return;
                     attempt.pop(); // newest-first, so this drops the oldest entry
                 }
             }
+        }
+
+        function historyEntryFromDoc(doc) {
+            return { issueId: doc.id, ...doc.data() };
+        }
+
+        async function initHistorySync() {
+            try {
+                currentUid = await historySignedIn;
+            } catch (err) {
+                logToConsole(`Firebase sign-in failed -- history will only show what's cached on this device: ${err instanceof Error ? err.message : err}`, true);
+                return;
+            }
+            historyCollection(currentUid)
+                .orderBy('submittedAt', 'desc')
+                .onSnapshot(
+                    (snapshot) => {
+                        historyCache = snapshot.docs.map(historyEntryFromDoc);
+                        cacheHistoryLocally();
+                        renderHistory();
+                    },
+                    (err) => {
+                        logToConsole(`Firestore history sync error: ${err instanceof Error ? err.message : err}`, true);
+                    }
+                );
         }
 
         function makeThumbnail(file) {
@@ -1146,16 +1265,23 @@
 
         async function addToHistory(item, issueId, address) {
             const thumbnail = await makeThumbnail(item.file);
-            historyCache.unshift({
-                issueId,
+            const entry = {
                 thumbnail,
                 address,
                 submittedAt: new Date().toISOString(),
                 status: 'Open',
                 link: `https://seeclickfix.com/issues/${issueId}`
-            });
-            persistHistory();
-            renderHistory();
+            };
+            try {
+                const uid = currentUid || await historySignedIn;
+                await historyCollection(uid).doc(String(issueId)).set(entry);
+                // onSnapshot picks this up and calls renderHistory() itself.
+            } catch (err) {
+                logToConsole(`Could not sync submission #${issueId} to Firestore -- showing it locally for this session only: ${err instanceof Error ? err.message : err}`, true);
+                historyCache.unshift({ issueId, ...entry });
+                cacheHistoryLocally();
+                renderHistory();
+            }
         }
 
         function renderHistory() {
@@ -1194,10 +1320,18 @@
                     throw new Error(`Status check failed: ${response.status}`);
                 }
                 const data = await response.json();
-                entry.status = data.status || entry.status;
-                persistHistory();
-                renderHistory();
-                logToConsole(`Issue #${entry.issueId} status: ${entry.status}`);
+                const status = data.status || entry.status;
+                try {
+                    const uid = currentUid || await historySignedIn;
+                    await historyCollection(uid).doc(String(entry.issueId)).update({ status });
+                    // onSnapshot picks this up and calls renderHistory() itself.
+                } catch (err) {
+                    logToConsole(`Could not sync status update for #${entry.issueId} to Firestore: ${err instanceof Error ? err.message : err}`, true);
+                    entry.status = status;
+                    cacheHistoryLocally();
+                    renderHistory();
+                }
+                logToConsole(`Issue #${entry.issueId} status: ${status}`);
             } catch (err) {
                 logToConsole(err, true);
             }
