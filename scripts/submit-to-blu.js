@@ -122,8 +122,13 @@ async function loginToBlu(page, email, password) {
     }
     await page.locator('input[type="email"]').first().fill(email);
     await page.locator('input[type="password"]').first().fill(password);
-    await page.getByRole('button', { name: /^log in$/i }).first().click();
-    await page.getByRole('button', { name: /log out/i }).first().waitFor({ state: 'visible', timeout: 20000 });
+    try {
+        await page.getByRole('button', { name: /^log in$/i }).first().click();
+        await page.getByRole('button', { name: /log out/i }).first().waitFor({ state: 'visible', timeout: 20000 });
+    } catch (err) {
+        await debugDump(page, 'log-in-click-failed');
+        throw err;
+    }
 }
 
 async function fillSubmitForm(page, entry, photoPath, notes) {
