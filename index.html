@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park Here (v3.3.0)</title>
+    <title>You Can't Park Here (v3.3.1)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -259,7 +259,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park Here</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.3.0</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.3.1</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -272,22 +272,21 @@
         </button>
     </div>
 
+    <!-- Combine Reports action: only relevant/shown with 2+ ready photos.
+         Clicking it merges every ready card below into a single card (one
+         photo/location, every plate listed) -- shown/hidden and re-labeled
+         by updateSubmitAllVisibility. Placed near the top since it needs to
+         be seen and decided on before scrolling through individual cards. -->
+    <button id="combineReportsBtn"
+            class="hidden w-full bg-white border-2 border-detroit-teal text-detroit-teal font-montserrat font-semibold py-3 rounded-lg shadow-sm hover:bg-detroit-mint/20 transition mb-6">
+        Combine Reports
+    </button>
+
     <!-- Queued photo preview/editor cards get inserted here -->
     <div id="queueContainer"></div>
 
     <!-- Batch submit bar (shown once at least one photo is ready) -->
-    <div id="submitAllBar" class="hidden mb-6 flex flex-col gap-2">
-        <!-- Only relevant with 2+ ready photos -- shown/hidden by updateSubmitAllVisibility -->
-        <div id="batchModeToggle" class="hidden bg-white rounded-lg shadow-sm p-3 flex flex-col gap-2 text-sm text-detroit-dark">
-            <label class="flex items-center gap-2">
-                <input type="radio" name="batchMode" value="separate" checked>
-                Submit as separate reports (one ticket per photo)
-            </label>
-            <label class="flex items-center gap-2">
-                <input type="radio" name="batchMode" value="combined">
-                Combine into one report (lists every plate in the vehicle field)
-            </label>
-        </div>
+    <div id="submitAllBar" class="hidden mb-6">
         <button id="submitAllBtn"
                 class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-4 rounded-lg shadow hover:bg-detroit-dark transition">
             Submit All Queued Photos
@@ -304,14 +303,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.3.0)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.3.1)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.3.0)...
+            App initialized (v3.3.1)...
         </div>
     </div>
 
@@ -322,7 +321,7 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.3.0';
+        const APP_VERSION = '3.3.1';
         const CONFIG = window.APP_CONFIG;
 
         function distanceMeters(lat1, lng1, lat2, lng2) {
@@ -407,8 +406,8 @@
 
         const photoInput = document.getElementById('photoInput');
         const queueContainer = document.getElementById('queueContainer');
+        const combineReportsBtn = document.getElementById('combineReportsBtn');
         const submitAllBar = document.getElementById('submitAllBar');
-        const batchModeToggle = document.getElementById('batchModeToggle');
         const submitAllBtn = document.getElementById('submitAllBtn');
         const historyList = document.getElementById('historyList');
 
@@ -561,19 +560,20 @@
         });
 
         // Build a preview/editor card for one queued photo and kick off its processing
-        function addQueueItem(file) {
-            const id = nextId();
-            const previewUrl = URL.createObjectURL(file);
-            const item = { id, file, previewUrl, status: 'processing', issueId: null, map: null, marker: null };
-
+        // Builds one card's DOM (thumbnail + editable fields), wires its
+        // listeners, and binds item.els/item.wrapper. Shared by addQueueItem
+        // (a freshly queued photo) and combineReports (a merged card built
+        // from an already-processed photo), so both look and behave
+        // identically to submit.
+        function mountItemCard(item, labelText, previewUrl) {
             const wrapper = document.createElement('div');
             wrapper.className = 'bg-white rounded-xl shadow-md p-4 mb-4 flex flex-col gap-3';
-            wrapper.dataset.itemId = id;
+            wrapper.dataset.itemId = item.id;
             wrapper.innerHTML = `
                 <div class="flex gap-3 items-start">
                     <img data-role="thumbnail" src="${previewUrl}" class="w-20 h-20 object-cover rounded-lg shadow-sm flex-shrink-0 cursor-zoom-in" alt="Selected photo -- tap to view full-size">
                     <div class="flex-1 min-w-0">
-                        <p class="text-xs text-slate-400 truncate">${file.name}</p>
+                        <p class="text-xs text-slate-400 truncate">${escapeHtml(labelText)}</p>
                         <p class="text-xs font-bold uppercase mt-1 text-detroit-teal" data-role="statusBadge">Extracting metadata...</p>
                     </div>
                 </div>
@@ -625,6 +625,7 @@
             `;
             queueContainer.appendChild(wrapper);
 
+            item.wrapper = wrapper;
             item.els = {
                 thumbnail: wrapper.querySelector('[data-role="thumbnail"]'),
                 statusBadge: wrapper.querySelector('[data-role="statusBadge"]'),
@@ -647,6 +648,16 @@
             });
             item.els.submitBtn.addEventListener('click', () => submitItem(item));
             item.els.thumbnail.addEventListener('click', () => openLightbox(previewUrl));
+
+            return wrapper;
+        }
+
+        function addQueueItem(file) {
+            const id = nextId();
+            const previewUrl = URL.createObjectURL(file);
+            const item = { id, file, previewUrl, status: 'processing', issueId: null, map: null, marker: null };
+
+            mountItemCard(item, file.name, previewUrl);
 
             queue.push(item);
             processQueueItem(item);
@@ -884,38 +895,26 @@
             }
         }
 
-        function getBatchMode() {
-            const checked = document.querySelector('input[name="batchMode"]:checked');
-            return checked ? checked.value : 'separate';
-        }
-
         function updateSubmitAllVisibility() {
             const pendingCount = queue.filter((i) => i.status === 'ready' || i.status === 'error').length;
             submitAllBar.classList.toggle('hidden', pendingCount === 0);
-            batchModeToggle.classList.toggle('hidden', pendingCount < 2);
-            submitAllBtn.textContent = getBatchMode() === 'combined' && pendingCount >= 2
-                ? `Submit Combined Report (${pendingCount} photos)`
-                : `Submit All Queued Photos (${pendingCount})`;
+            submitAllBtn.textContent = `Submit All Queued Photos (${pendingCount})`;
+            combineReportsBtn.classList.toggle('hidden', pendingCount < 2);
+            combineReportsBtn.textContent = `Combine ${pendingCount} Reports Into One`;
         }
-        document.querySelectorAll('input[name="batchMode"]').forEach((radio) => {
-            radio.addEventListener('change', updateSubmitAllVisibility);
-        });
 
         submitAllBtn.addEventListener('click', async () => {
             submitAllBtn.disabled = true;
             const pending = queue.filter((i) => i.status === 'ready' || i.status === 'error');
-            if (getBatchMode() === 'combined' && pending.length > 1) {
-                logToConsole(`Submitting ${pending.length} queued photo(s) as one combined report...`);
-                await submitCombinedItems(pending);
-            } else {
-                logToConsole(`Submitting ${pending.length} queued photo(s) separately...`);
-                for (const item of pending) {
-                    await submitItem(item);
-                }
+            logToConsole(`Submitting ${pending.length} queued photo(s)...`);
+            for (const item of pending) {
+                await submitItem(item);
             }
             submitAllBtn.disabled = false;
             updateSubmitAllVisibility();
         });
+
+        combineReportsBtn.addEventListener('click', combineReports);
 
         // Submit a single queued item to Improve Detroit (SeeClickFix)
         async function submitItem(item) {
@@ -1004,92 +1003,57 @@
             updateSubmitAllVisibility();
         }
 
-        // Files one SeeClickFix ticket covering every item in a batch, instead
-        // of one ticket per photo. A ticket only carries one lat/lng/address
-        // and one attached photo, so the first item in the batch supplies
-        // those; every item's detected plate is listed in the vehicle/plate
-        // question so the ticket still documents every vehicle involved.
-        async function submitCombinedItems(items) {
-            if (items.length === 0) return;
-            const primary = items[0];
+        // Merges every ready/error card into a single card: the source cards
+        // disappear from the page entirely (not just visually) and the queue
+        // itself is updated so submitting afterward behaves exactly like any
+        // other single card. The merged card reuses the first source item's
+        // location/photo (a ticket can only carry one of each), and lists
+        // every source item's detected plate in the plate field.
+        function combineReports() {
+            const sourceItems = queue.filter((i) => i.status === 'ready' || i.status === 'error');
+            if (sourceItems.length < 2) return;
 
-            items.forEach((item) => {
-                item.status = 'submitting';
-                item.els.submitBtn.disabled = true;
-                item.els.submitBtn.textContent = 'Submitting...';
-                item.els.submitBtn.classList.replace('bg-detroit-teal', 'bg-slate-400');
-                item.els.itemMsg.textContent = 'Sending combined report to Improve Detroit...';
-                item.els.itemMsg.className = 'text-center text-xs font-medium text-detroit-teal';
+            const primary = sourceItems[0];
+            const plates = sourceItems.map((item) => item.els.plate.value.trim()).filter(Boolean);
+
+            sourceItems.forEach((item) => {
+                item.wrapper.remove();
+                queue.splice(queue.indexOf(item), 1);
             });
 
-            const pos = primary.marker ? primary.marker.getLatLng() : { lat: primary.lat, lng: primary.lng };
-            const address = primary.els.address.value.trim();
-            const summary = primary.els.summary.value.trim();
-            const description = primary.els.description.value.trim();
-            const nature = primary.els.nature.value === '__custom__' ? primary.els.natureCustom.value.trim() : primary.els.nature.value;
-            const timing = primary.els.timing.value.trim();
-            const plates = items.map((item) => item.els.plate.value.trim()).filter(Boolean);
+            const merged = {
+                id: nextId(),
+                file: primary.file,
+                previewUrl: primary.previewUrl,
+                status: 'ready',
+                issueId: null,
+                map: null,
+                marker: null,
+                lat: primary.lat,
+                lng: primary.lng,
+                vehicleQuestionId: primary.vehicleQuestionId,
+            };
 
-            const formData = new FormData();
-            formData.append('lat', pos.lat);
-            formData.append('lng', pos.lng);
-            formData.append('address', address);
-            formData.append('request_type_id', CONFIG.seeClickFix.requestTypeId);
-            formData.append('answers[summary]', summary);
-            formData.append('answers[description]', description);
-            formData.append(`answers[${CONFIG.seeClickFix.natureQuestionId}]`, nature);
-            formData.append(`answers[${CONFIG.seeClickFix.timingQuestionId}]`, timing);
-            if (primary.vehicleQuestionId && plates.length > 0) {
-                formData.append(`answers[${primary.vehicleQuestionId}]`, plates.join(', '));
-            }
-            formData.append('answers[issue_image]', primary.file);
+            mountItemCard(merged, `Combined Report (${sourceItems.length} photos)`, primary.previewUrl);
 
-            try {
-                logToConsole(`Dispatching combined POST request for ${items.length} photo(s) via CORS proxy...`);
-                const targetUrl = 'https://seeclickfix.com/api/v2/issues';
-                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+            merged.els.statusBadge.textContent = 'Ready to submit';
+            merged.els.statusBadge.className = 'text-xs font-bold uppercase mt-1 text-detroit-dark';
+            merged.els.fields.classList.remove('hidden');
+            merged.els.fields.classList.add('flex');
 
-                const response = await fetch(proxyUrl, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` },
-                    body: formData
-                });
+            merged.els.address.value = primary.els.address.value;
+            merged.els.summary.value = primary.els.summary.value;
+            merged.els.description.value = primary.els.description.value;
+            merged.els.nature.innerHTML = primary.els.nature.innerHTML;
+            merged.els.nature.value = primary.els.nature.value;
+            merged.els.natureCustom.value = primary.els.natureCustom.value;
+            merged.els.timing.value = primary.els.timing.value;
+            merged.els.plate.value = plates.join(', ');
+            merged.els.plate.placeholder = plates.length === 0 ? 'No plate detected' : '';
 
-                logToConsole(`Combined submission response: ${response.status} ${response.statusText} (content-type: ${response.headers.get('content-type')})`);
-
-                if (!response.ok) {
-                    const errText = await response.text();
-                    throw new Error(`SeeClickFix API Error ${response.status}: ${errText}`);
-                }
-
-                const data = await response.json();
-                logToConsole(`Combined submission success! Issue ID: ${data.id}`);
-
-                items.forEach((item) => {
-                    item.status = 'success';
-                    item.issueId = data.id;
-                    item.els.itemMsg.textContent = `Submitted in combined report — Issue #${data.id}`;
-                    item.els.itemMsg.className = 'text-center text-xs font-bold text-detroit-dark';
-                    item.els.submitBtn.textContent = 'Submitted ✓';
-                });
-
-                try {
-                    await addToHistory(primary, data.id, address);
-                } catch (historyErr) {
-                    logToConsole(`Ticket #${data.id} was submitted, but local history couldn't be saved: ${historyErr instanceof Error ? historyErr.message : historyErr}`, true);
-                }
-
-            } catch (err) {
-                logToConsole(err, true);
-                items.forEach((item) => {
-                    item.status = 'error';
-                    item.els.itemMsg.textContent = 'Failed — check debug console';
-                    item.els.itemMsg.className = 'text-center text-xs font-medium text-red-600';
-                    item.els.submitBtn.disabled = false;
-                    item.els.submitBtn.textContent = 'Try Again';
-                    item.els.submitBtn.classList.replace('bg-slate-400', 'bg-detroit-teal');
-                });
-            }
+            queue.push(merged);
+            initMiniMap(merged);
+            logToConsole(`Combined ${sourceItems.length} photos into one report -- plates: ${plates.join(', ') || 'none detected'}.`);
             updateSubmitAllVisibility();
         }
 
