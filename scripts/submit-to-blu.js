@@ -324,7 +324,7 @@ async function main() {
             const tempPhotoPath = path.join(os.tmpdir(), `blu-${issueId}.jpg`);
             try {
                 await downloadToTempFile(entry.photoUrl, tempPhotoPath);
-                const notes = `Incident reported to the City of Detroit as #${issueId}.`;
+                const notes = `Incident reported to the City of Detroit as #${issueId}. https://seeclickfix.com/issues/${issueId}`;
                 await fillSubmitForm(page, entry, tempPhotoPath, notes);
 
                 if (args.dryRun) {
