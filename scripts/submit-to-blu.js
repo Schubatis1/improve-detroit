@@ -226,14 +226,16 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
     // like a segmented hour/minute/AM-PM input rather than a popup list --
     // try typing the digits directly after focusing it.
     try {
-        await page.getByLabel('Time Picker').click({ force: true });
+        const timeField = page.getByLabel('Time Picker');
+        // Both a default-position click and ArrowLeft-then-type left only
+        // the AM/PM segment highlighted (two debug screenshots showed
+        // identical "--:-- [AM]" state) -- click explicitly at the field's
+        // left edge to target the HH segment by coordinate instead.
+        const box = await timeField.boundingBox();
+        await page.mouse.click(box.x + 8, box.y + box.height / 2);
         await page.waitForTimeout(200);
-        // The click landed on the AM/PM segment (only "AM" was highlighted
-        // in a debug screenshot, HH/MM untouched) -- segmented inputs like
-        // this typically wrap Left/Right between segments, so step back to
-        // the first (HH) segment before typing.
-        await page.keyboard.press('ArrowLeft');
-        await page.keyboard.press('ArrowLeft');
+        await debugDump(page, 'time-picker-left-edge-clicked');
+
         let hour12 = takenAt.getHours() % 12;
         if (hour12 === 0) hour12 = 12;
         const hh = String(hour12).padStart(2, '0');
