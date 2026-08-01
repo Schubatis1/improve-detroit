@@ -140,18 +140,28 @@ async function loginToBlu(page, email, password) {
     }
     await page.locator('input[type="email"]').first().fill(email);
     await page.locator('input[type="password"]').first().fill(password);
-    try {
-        // A plain .click() times out here waiting for the button to be
-        // "stable" (debug screenshots show only one matching, fully visible
-        // "Log in" button, so something on the page keeps nudging its
-        // bounding box -- likely a Wix scroll-reveal animation). Confirmed
-        // via screenshot that it's genuinely clickable, so force: true skips
-        // that stability wait and clicks its current position directly.
+
+    // The Log in click is flaky in ways that don't show up in a debug
+    // screenshot: sometimes it logs in within a few seconds (confirmed via
+    // a captured login.jsw 200 response), sometimes an identical-looking
+    // click never fires the request at all. force: true skips Playwright's
+    // "stable" wait (a plain click reliably times out on that check, cause
+    // unconfirmed -- possibly a hover/scroll-reveal transition that never
+    // settles), but doesn't fix the click sometimes just not registering.
+    // Retrying the click itself (not just waiting longer) works around it.
+    let loggedIn = false;
+    for (let attempt = 1; attempt <= 3 && !loggedIn; attempt++) {
         await page.getByRole('button', { name: /^log in$/i }).first().click({ force: true });
-        await page.getByRole('button', { name: /log out/i }).first().waitFor({ state: 'visible', timeout: 45000 });
-    } catch (err) {
+        try {
+            await page.getByRole('button', { name: /log out/i }).first().waitFor({ state: 'visible', timeout: 15000 });
+            loggedIn = true;
+        } catch {
+            console.log(`  Log in attempt ${attempt} didn't complete in 15s, retrying...`);
+        }
+    }
+    if (!loggedIn) {
         await debugDump(page, 'log-in-click-failed');
-        throw err;
+        throw new Error('Could not log into BLU after 3 attempts');
     }
 }
 
