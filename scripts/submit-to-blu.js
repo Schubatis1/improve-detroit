@@ -188,8 +188,10 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
     await page.locator('select').nth(2).selectOption({ label: METRO_CITY_DETROIT });
 
     // The date field is a read-only custom calendar widget (fill() doesn't
-    // work -- "element is not editable"), so open it and dump what its
-    // popup actually looks like rather than guess blind.
+    // work -- "element is not editable"). Each day cell is a <td
+    // aria-label="August 1">, so select by that once the right month is
+    // showing; the header's month-nav buttons live in a div containing the
+    // month-name label (.FRQP0u), first/last child = prev/next.
     const takenAt = entry.photoTakenAt ? new Date(entry.photoTakenAt) : new Date();
     try {
         // force: true -- a stray overlay div (donation banner, most likely;
@@ -197,26 +199,41 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
         // was observed intercepting pointer events on this exact field.
         await page.getByPlaceholder('Select date').click({ force: true });
         await page.waitForTimeout(500);
+
+        const targetMonth = takenAt.toLocaleDateString('en-US', { month: 'long' });
+        const targetYear = String(takenAt.getFullYear());
+        const monthNavGroup = page.locator('.FRQP0u');
+        for (let i = 0; i < 24; i++) {
+            const shownMonth = (await monthNavGroup.locator('div').innerText()).trim();
+            const shownYear = (await page.locator('.GZEhm3 button', { hasText: /^\d{4}$/ }).innerText()).trim();
+            if (shownMonth === targetMonth && shownYear === targetYear) break;
+            const shownDate = new Date(`${shownMonth} 1, ${shownYear}`);
+            const targetFirstOfMonth = new Date(`${targetMonth} 1, ${targetYear}`);
+            const goingBack = shownDate > targetFirstOfMonth;
+            await monthNavGroup.locator('button').nth(goingBack ? 0 : 1).click();
+            await page.waitForTimeout(150);
+            if (i === 23) throw new Error(`Calendar navigation didn't reach ${targetMonth} ${targetYear}`);
+        }
+
+        const dayLabel = takenAt.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+        await page.locator(`td[aria-label="${dayLabel}"]`).click();
     } catch (err) {
-        await debugDump(page, 'date-picker-click-failed');
+        await debugDump(page, 'date-picker-failed');
         throw err;
     }
-    await debugDump(page, 'date-picker-open');
-    // Neither textContent nor ::before/::after content nor attributes on
-    // the inner div showed a day number -- dump raw outerHTML for the
-    // first ~15 cells (covers the first two visible weeks) to see exactly
-    // what's actually there, shadow DOM included if present.
-    const cellHtml = await page.locator('.wixui-date-picker__calendar td').evaluateAll((tds) =>
-        tds.slice(0, 15).map((td, i) => ({
-            i,
-            outerHTML: td.outerHTML,
-            shadowHTML: td.querySelector('div') && td.querySelector('div').shadowRoot
-                ? td.querySelector('div').shadowRoot.innerHTML
-                : null,
-        }))
-    ).catch((err) => [{ error: String(err) }]);
-    fs.writeFileSync(path.join(__dirname, 'dry-run', 'debug-date-picker-html.json'), JSON.stringify(cellHtml, null, 1));
-    throw new Error('date picker inspection checkpoint -- see debug-date-picker-html.json');
+
+    // The time field is also a read-only custom widget; inspect it the
+    // same way the date field was inspected, in the same run, to avoid
+    // another full debug round-trip.
+    try {
+        await page.getByLabel('Time Picker').click({ force: true });
+        await page.waitForTimeout(500);
+        await debugDump(page, 'time-picker-open');
+        throw new Error('time picker inspection checkpoint -- see debug-time-picker-open.png/json');
+    } catch (err) {
+        if (!/inspection checkpoint/.test(err.message)) await debugDump(page, 'time-picker-failed');
+        throw err;
+    }
 
     // crashOccurred intentionally left unchecked -- these are obstruction
     // reports, not crash reports.
