@@ -77,6 +77,24 @@ async function debugDump(page, label) {
         els.slice(0, 60).map((el) => (el.textContent || '').trim().replace(/\s+/g, ' ')).filter(Boolean)
     ).catch(() => []);
     fs.writeFileSync(path.join(dir, `debug-${label}-buttons.json`), JSON.stringify(buttons, null, 2));
+
+    // Calendar/datepicker-flavored elements specifically, with enough of
+    // their DOM (tag, role, class, a few data-* attrs, short text) to write
+    // real selectors from -- generic button/link text alone won't show a
+    // calendar grid's day cells.
+    const calendarInfo = await page.evaluate(() => {
+        const matches = Array.from(document.querySelectorAll(
+            '[class*="calendar" i], [class*="datepicker" i], [class*="date-picker" i], [role="grid"], [role="gridcell"], [role="dialog"], [class*="popover" i]'
+        ));
+        return matches.slice(0, 30).map((el) => ({
+            tag: el.tagName,
+            class: el.className && el.className.toString().slice(0, 120),
+            role: el.getAttribute('role'),
+            text: (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60),
+            childCount: el.children.length,
+        }));
+    }).catch((err) => [{ error: String(err) }]);
+    fs.writeFileSync(path.join(dir, `debug-${label}-calendar.json`), JSON.stringify(calendarInfo, null, 2));
 }
 
 async function dismissOverlays(page) {
@@ -158,13 +176,14 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
     await page.getByPlaceholder('Geolocation (preferred)').fill(`${entry.lat}, ${entry.lng}`);
     await page.locator('select').nth(2).selectOption({ label: METRO_CITY_DETROIT });
 
+    // The date field is a read-only custom calendar widget (fill() doesn't
+    // work -- "element is not editable"), so open it and dump what its
+    // popup actually looks like rather than guess blind.
     const takenAt = entry.photoTakenAt ? new Date(entry.photoTakenAt) : new Date();
-    const dateStr = `${takenAt.getMonth() + 1}/${takenAt.getDate()}/${takenAt.getFullYear()}`;
-    const timeStr = takenAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    await page.getByPlaceholder('Select date').fill(dateStr);
-    await page.getByPlaceholder('Select date').press('Escape');
-    await page.getByLabel('Time Picker').fill(timeStr);
-    await page.getByLabel('Time Picker').press('Escape');
+    await page.getByPlaceholder('Select date').click();
+    await page.waitForTimeout(500);
+    await debugDump(page, 'date-picker-open');
+    throw new Error('date picker inspection checkpoint -- see debug-date-picker-open.png/json');
 
     // crashOccurred intentionally left unchecked -- these are obstruction
     // reports, not crash reports.
