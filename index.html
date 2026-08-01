@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.9.0)</title>
+    <title>You Can't Park There (v3.10.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -37,7 +37,7 @@
          file -- bump it (matching APP_VERSION below) whenever config.js or
          this file changes, so a browser that loaded the page just before a
          deploy doesn't keep running stale config after a normal refresh. -->
-    <script src="config.js?v=3.9.0"></script>
+    <script src="config.js?v=3.10.0"></script>
     <!-- Firebase (compat build, so it works as a plain global like the rest
          of this no-build page) -- syncs submission history to Firestore. -->
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -292,7 +292,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.9.0</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.10.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -337,14 +337,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.9.0)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.10.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.9.0)...
+            App initialized (v3.10.0)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -356,7 +356,7 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.9.0';
+        const APP_VERSION = '3.10.0';
         const CONFIG = window.APP_CONFIG;
 
         // Firestore is the source of truth for submission history. Auth is
@@ -741,6 +741,19 @@
                         <p class="text-[10px] text-slate-400 mt-1">AI-detected from the photo -- please verify before submitting.</p>
                     </div>
 
+                    <div>
+                        <label class="text-xs font-bold text-detroit-navy uppercase">Bike Lane Uprising Category</label>
+                        <select data-role="bluCategory" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                            <option value="Private Owner Vehicle">Private Owner Vehicle</option>
+                            <option value="Company Vehicle">Company Vehicle</option>
+                            <option value="Construction">Construction</option>
+                            <option value="Municipal (city) Vehicle - includes USPS">Municipal (city) Vehicle - includes USPS</option>
+                            <option value="Taxi / Uber / Livery / Lyft">Taxi / Uber / Livery / Lyft</option>
+                            <option value="Other  (damaged lane / snow / debris / pedestrian / etc.)">Other (damaged lane / snow / debris / pedestrian / etc.)</option>
+                        </select>
+                        <p class="text-[10px] text-slate-400 mt-1">Used when this report is auto-mirrored to Bike Lane Uprising. Defaults per geofence; change if it's not a vehicle obstruction.</p>
+                    </div>
+
                     <button data-role="submitBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition">
                         Submit to Improve Detroit
                     </button>
@@ -762,6 +775,7 @@
                 natureCustom: wrapper.querySelector('[data-role="natureCustom"]'),
                 timing: wrapper.querySelector('[data-role="timing"]'),
                 plate: wrapper.querySelector('[data-role="plate"]'),
+                bluCategory: wrapper.querySelector('[data-role="bluCategory"]'),
                 submitBtn: wrapper.querySelector('[data-role="submitBtn"]'),
                 itemMsg: wrapper.querySelector('[data-role="itemMsg"]'),
             };
@@ -834,6 +848,7 @@
                 const { workflow, geofence } = resolveWorkflow(item.lat, item.lng);
                 item.workflow = workflow;
                 item.matchedGeofence = geofence;
+                if (workflow.bluCategory) item.els.bluCategory.value = workflow.bluCategory;
                 if (geofence) {
                     logToConsole(`[${item.file.name}] Within ${geofence.radiusMeters}m of geofence "${geofence.name}" -- using its workflow.`);
                     // Give Firestore history a few seconds to load on a cold
@@ -1007,6 +1022,7 @@
             logToConsole(`[${item.file.name}] Plate matches rule "${rule.name}" -- applying its workflow.`);
             item.workflow = workflow;
             item.matchedPlateRule = rule;
+            if (rule.workflow.bluCategory) item.els.bluCategory.value = rule.workflow.bluCategory;
 
             if (stillAutoFilled) {
                 const autoDescription = pickRandomDescription(workflow, address);
@@ -1333,7 +1349,7 @@
                 lng: item.lng,
                 plate: item.els.plate.value.trim() || null,
                 photoTakenAt: item.photoDateObj ? item.photoDateObj.toISOString() : null,
-                bluCategory: (item.workflow && item.workflow.bluCategory) || 'Private Owner Vehicle',
+                bluCategory: item.els.bluCategory.value,
                 bluStatus: 'pending',
             };
             try {

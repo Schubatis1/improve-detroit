@@ -228,6 +228,12 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
     try {
         await page.getByLabel('Time Picker').click({ force: true });
         await page.waitForTimeout(200);
+        // The click landed on the AM/PM segment (only "AM" was highlighted
+        // in a debug screenshot, HH/MM untouched) -- segmented inputs like
+        // this typically wrap Left/Right between segments, so step back to
+        // the first (HH) segment before typing.
+        await page.keyboard.press('ArrowLeft');
+        await page.keyboard.press('ArrowLeft');
         let hour12 = takenAt.getHours() % 12;
         if (hour12 === 0) hour12 = 12;
         const hh = String(hour12).padStart(2, '0');
