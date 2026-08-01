@@ -1,10 +1,13 @@
 name: Submit pending reports to Bike Lane Uprising
 
 on:
-  schedule:
-    # Every 30 minutes. BLU has no public API, so this drives their real
-    # submit form with Playwright -- see scripts/submit-to-blu.js.
-    - cron: '*/30 * * * *'
+  # Schedule trigger is disabled until a full non-dry-run submission has
+  # been manually verified end to end (date/time picker handling is still
+  # being worked out via workflow_dispatch dry runs) -- re-enable the
+  # `schedule:` block below once confirmed. BLU has no public API, so this
+  # drives their real submit form with Playwright, see scripts/submit-to-blu.js.
+  # schedule:
+  #   - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:
