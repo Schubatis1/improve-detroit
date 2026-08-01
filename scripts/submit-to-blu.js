@@ -79,16 +79,23 @@ async function debugDump(page, label) {
     fs.writeFileSync(path.join(dir, `debug-${label}-buttons.json`), JSON.stringify(buttons, null, 2));
 }
 
-async function dismissCookieBanner(page) {
-    // Usercentrics consent banner (consent-api.service.consent.usercentrics.eu
-    // showed up in the HAR) can overlay the page on a fresh session/region
-    // and block clicks on the real header buttons underneath it.
-    const acceptButton = page.getByRole('button', { name: /accept all|accept|got it/i }).first();
-    try {
-        await acceptButton.waitFor({ state: 'visible', timeout: 5000 });
-        await acceptButton.click();
-    } catch {
-        // No banner shown -- nothing to dismiss.
+async function dismissOverlays(page) {
+    // Two overlays can sit on top of the real page content on a fresh
+    // session: a Usercentrics cookie-consent banner, and a "Love Our
+    // Work?" donation banner across the top (both confirmed via a debug
+    // screenshot during setup). Dismiss whichever appear; neither is
+    // always present, so failures to find them are expected, not errors.
+    const dismissers = [
+        page.getByRole('button', { name: /accept all|accept|got it/i }).first(),
+        page.getByRole('button', { name: /^close$/i }).first(),
+    ];
+    for (const button of dismissers) {
+        try {
+            await button.waitFor({ state: 'visible', timeout: 3000 });
+            await button.click();
+        } catch {
+            // Not shown -- nothing to dismiss.
+        }
     }
 }
 
@@ -98,27 +105,31 @@ async function loginToBlu(page, email, password) {
     // wait for the DOM plus a real element instead.
     await page.goto(SUBMIT_URL, { waitUntil: 'domcontentloaded' });
     await page.locator('input[type="file"]').first().waitFor({ state: 'attached', timeout: 30000 });
-    await dismissCookieBanner(page);
+    await dismissOverlays(page);
 
     const alreadyLoggedIn = await page.getByRole('button', { name: /log out/i }).count();
     if (alreadyLoggedIn > 0) return;
 
+    // The /submit page shows an inline Email/Password login form directly
+    // when signed out (not a nav-bar "Login/Sign up" button + modal, which
+    // is what the header elsewhere on the site uses) -- confirmed via a
+    // debug screenshot during setup.
     try {
-        await page.getByRole('button', { name: /login\s*\/\s*sign up/i }).first().click({ timeout: 15000 });
+        await page.locator('input[type="email"]').first().waitFor({ state: 'visible', timeout: 15000 });
     } catch (err) {
-        await debugDump(page, 'login-button-not-found');
+        await debugDump(page, 'login-form-not-found');
         throw err;
     }
-    await page.locator('input[type="email"]').first().waitFor({ state: 'visible', timeout: 15000 });
     await page.locator('input[type="email"]').first().fill(email);
     await page.locator('input[type="password"]').first().fill(password);
-    await page.getByRole('button', { name: /log in/i }).first().click();
+    await page.getByRole('button', { name: /^log in$/i }).first().click();
     await page.getByRole('button', { name: /log out/i }).first().waitFor({ state: 'visible', timeout: 20000 });
 }
 
 async function fillSubmitForm(page, entry, photoPath, notes) {
     await page.goto(SUBMIT_URL, { waitUntil: 'domcontentloaded' });
     await page.locator('input[type="file"]').first().waitFor({ state: 'attached', timeout: 30000 });
+    await dismissOverlays(page);
 
     // The visible photo input is the first file input on the page.
     await page.locator('input[type="file"]').first().setInputFiles(photoPath);
