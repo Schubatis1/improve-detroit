@@ -69,17 +69,46 @@ async function downloadToTempFile(url, destPath) {
     return destPath;
 }
 
+async function debugDump(page, label) {
+    const dir = path.join(__dirname, 'dry-run');
+    fs.mkdirSync(dir, { recursive: true });
+    await page.screenshot({ path: path.join(dir, `debug-${label}.png`), fullPage: true }).catch(() => {});
+    const buttons = await page.locator('button, [role="button"], a').evaluateAll((els) =>
+        els.slice(0, 60).map((el) => (el.textContent || '').trim().replace(/\s+/g, ' ')).filter(Boolean)
+    ).catch(() => []);
+    fs.writeFileSync(path.join(dir, `debug-${label}-buttons.json`), JSON.stringify(buttons, null, 2));
+}
+
+async function dismissCookieBanner(page) {
+    // Usercentrics consent banner (consent-api.service.consent.usercentrics.eu
+    // showed up in the HAR) can overlay the page on a fresh session/region
+    // and block clicks on the real header buttons underneath it.
+    const acceptButton = page.getByRole('button', { name: /accept all|accept|got it/i }).first();
+    try {
+        await acceptButton.waitFor({ state: 'visible', timeout: 5000 });
+        await acceptButton.click();
+    } catch {
+        // No banner shown -- nothing to dismiss.
+    }
+}
+
 async function loginToBlu(page, email, password) {
     // Wix pages never go network-idle (constant frog.wix.com/telemetry
     // background traffic), so 'networkidle' reliably times out here --
     // wait for the DOM plus a real element instead.
     await page.goto(SUBMIT_URL, { waitUntil: 'domcontentloaded' });
     await page.locator('input[type="file"]').first().waitFor({ state: 'attached', timeout: 30000 });
+    await dismissCookieBanner(page);
 
     const alreadyLoggedIn = await page.getByRole('button', { name: /log out/i }).count();
     if (alreadyLoggedIn > 0) return;
 
-    await page.getByRole('button', { name: /login\s*\/\s*sign up/i }).first().click();
+    try {
+        await page.getByRole('button', { name: /login\s*\/\s*sign up/i }).first().click({ timeout: 15000 });
+    } catch (err) {
+        await debugDump(page, 'login-button-not-found');
+        throw err;
+    }
     await page.locator('input[type="email"]').first().waitFor({ state: 'visible', timeout: 15000 });
     await page.locator('input[type="email"]').first().fill(email);
     await page.locator('input[type="password"]').first().fill(password);
