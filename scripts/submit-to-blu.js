@@ -202,7 +202,21 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
         throw err;
     }
     await debugDump(page, 'date-picker-open');
-    throw new Error('date picker inspection checkpoint -- see debug-date-picker-open.png/json');
+    const calendarDetail = await page.locator('.wixui-date-picker__calendar').evaluate((el) => {
+        const describe = (node, depth) => {
+            if (depth > 6 || !node) return null;
+            const kids = Array.from(node.children || []).map((c) => describe(c, depth + 1)).filter(Boolean);
+            return {
+                tag: node.tagName,
+                class: node.className && node.className.toString(),
+                text: node.children.length === 0 ? (node.textContent || '').trim() : undefined,
+                kids: kids.length ? kids : undefined,
+            };
+        };
+        return describe(el, 0);
+    }).catch((err) => ({ error: String(err) }));
+    fs.writeFileSync(path.join(__dirname, 'dry-run', 'debug-date-picker-open-tree.json'), JSON.stringify(calendarDetail, null, 1));
+    throw new Error('date picker inspection checkpoint -- see debug-date-picker-open-tree.json');
 
     // crashOccurred intentionally left unchecked -- these are obstruction
     // reports, not crash reports.
