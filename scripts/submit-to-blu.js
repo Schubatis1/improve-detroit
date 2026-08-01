@@ -130,7 +130,7 @@ async function loginToBlu(page, email, password) {
         // via screenshot that it's genuinely clickable, so force: true skips
         // that stability wait and clicks its current position directly.
         await page.getByRole('button', { name: /^log in$/i }).first().click({ force: true });
-        await page.getByRole('button', { name: /log out/i }).first().waitFor({ state: 'visible', timeout: 20000 });
+        await page.getByRole('button', { name: /log out/i }).first().waitFor({ state: 'visible', timeout: 45000 });
     } catch (err) {
         await debugDump(page, 'log-in-click-failed');
         throw err;
@@ -197,6 +197,19 @@ async function main() {
 
     const browser = await chromium.launch({ headless: !args.headed });
     const page = await browser.newPage();
+
+    // Diagnostic logging: the login click was observed to enter a
+    // disabled/loading state and never resolve in CI -- log the actual
+    // login network response and any console errors so we can tell a slow
+    // request from a rejected one instead of guessing further.
+    page.on('console', (msg) => {
+        if (msg.type() === 'error') console.log(`  [page console error] ${msg.text()}`);
+    });
+    page.on('response', async (res) => {
+        if (/login\.jsw|cognito|captcha|recaptcha/i.test(res.url())) {
+            console.log(`  [network] ${res.status()} ${res.url().slice(0, 150)}`);
+        }
+    });
 
     try {
         await loginToBlu(page, email, password);
