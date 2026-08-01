@@ -61,6 +61,28 @@ function loadServiceAccount(args) {
     throw new Error('Provide credentials via --service-account <path> or FIREBASE_SERVICE_ACCOUNT_JSON.');
 }
 
+// entry.photoTakenAt is stored as a UTC ISO timestamp. This script runs on
+// a GitHub Actions runner (UTC), so plain .getHours()/.getDate() etc. would
+// read UTC time -- wrong by 4-5 hours for a Detroit obstruction, and wrong
+// by a whole day for anything reported near midnight Eastern. All reports
+// are in Detroit, so convert explicitly instead of relying on server tz.
+function detroitDateParts(date) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Detroit',
+        month: 'long', day: 'numeric', year: 'numeric',
+        hour: 'numeric', minute: '2-digit', hour12: true,
+    }).formatToParts(date);
+    const get = (type) => parts.find((p) => p.type === type)?.value;
+    return {
+        month: get('month'),
+        day: Number(get('day')),
+        year: get('year'),
+        hour12: get('hour').padStart(2, '0'),
+        minute: get('minute'),
+        ampm: get('dayPeriod').toUpperCase(),
+    };
+}
+
 async function downloadToTempFile(url, destPath) {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Photo download failed: HTTP ${res.status}`);
@@ -193,6 +215,7 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
     // showing; the header's month-nav buttons live in a div containing the
     // month-name label (.FRQP0u), first/last child = prev/next.
     const takenAt = entry.photoTakenAt ? new Date(entry.photoTakenAt) : new Date();
+    const detroitParts = detroitDateParts(takenAt);
     try {
         // force: true -- a stray overlay div (donation banner, most likely;
         // dismissOverlays' close-button match isn't catching it every time)
@@ -200,8 +223,8 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
         await page.getByPlaceholder('Select date').click({ force: true });
         await page.waitForTimeout(500);
 
-        const targetMonth = takenAt.toLocaleDateString('en-US', { month: 'long' });
-        const targetYear = String(takenAt.getFullYear());
+        const targetMonth = detroitParts.month;
+        const targetYear = detroitParts.year;
         const monthNavGroup = page.locator('.FRQP0u');
         for (let i = 0; i < 24; i++) {
             const shownMonth = (await monthNavGroup.locator('div').innerText()).trim();
@@ -215,38 +238,26 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
             if (i === 23) throw new Error(`Calendar navigation didn't reach ${targetMonth} ${targetYear}`);
         }
 
-        const dayLabel = takenAt.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+        const dayLabel = `${detroitParts.month} ${detroitParts.day}`;
         await page.locator(`td[aria-label="${dayLabel}"]`).click();
     } catch (err) {
         await debugDump(page, 'date-picker-failed');
         throw err;
     }
 
-    // The time field ("--:-- AM" with spinner arrows, type="tel") looks
-    // like a segmented hour/minute/AM-PM input rather than a popup list --
-    // try typing the digits directly after focusing it.
+    // The time field ("--:-- AM" with spinner arrows, type="tel") is a
+    // segmented hour/minute/AM-PM input, not a popup list. Its default
+    // click point (and ArrowLeft navigation) both land on/stay on the
+    // AM/PM segment -- confirmed via debug screenshots -- so click
+    // explicitly 8px from the left edge to target the HH segment instead.
     try {
-        const timeField = page.getByLabel('Time Picker');
-        // Both a default-position click and ArrowLeft-then-type left only
-        // the AM/PM segment highlighted (two debug screenshots showed
-        // identical "--:-- [AM]" state) -- click explicitly at the field's
-        // left edge to target the HH segment by coordinate instead.
-        const box = await timeField.boundingBox();
+        const box = await page.getByLabel('Time Picker').boundingBox();
         await page.mouse.click(box.x + 8, box.y + box.height / 2);
         await page.waitForTimeout(200);
-        await debugDump(page, 'time-picker-left-edge-clicked');
-
-        let hour12 = takenAt.getHours() % 12;
-        if (hour12 === 0) hour12 = 12;
-        const hh = String(hour12).padStart(2, '0');
-        const mm = String(takenAt.getMinutes()).padStart(2, '0');
-        const ampm = takenAt.getHours() >= 12 ? 'PM' : 'AM';
-        await page.keyboard.type(`${hh}${mm}${ampm}`, { delay: 50 });
+        await page.keyboard.type(`${detroitParts.hour12}${detroitParts.minute}${detroitParts.ampm}`, { delay: 50 });
         await page.waitForTimeout(300);
-        await debugDump(page, 'time-picker-typed');
-        throw new Error('time picker typing checkpoint -- see debug-time-picker-typed.png');
     } catch (err) {
-        if (!/typing checkpoint/.test(err.message)) await debugDump(page, 'time-picker-failed');
+        await debugDump(page, 'time-picker-failed');
         throw err;
     }
 
