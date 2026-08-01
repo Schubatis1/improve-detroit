@@ -123,7 +123,13 @@ async function loginToBlu(page, email, password) {
     await page.locator('input[type="email"]').first().fill(email);
     await page.locator('input[type="password"]').first().fill(password);
     try {
-        await page.getByRole('button', { name: /^log in$/i }).first().click();
+        // A plain .click() times out here waiting for the button to be
+        // "stable" (debug screenshots show only one matching, fully visible
+        // "Log in" button, so something on the page keeps nudging its
+        // bounding box -- likely a Wix scroll-reveal animation). Confirmed
+        // via screenshot that it's genuinely clickable, so force: true skips
+        // that stability wait and clicks its current position directly.
+        await page.getByRole('button', { name: /^log in$/i }).first().click({ force: true });
         await page.getByRole('button', { name: /log out/i }).first().waitFor({ state: 'visible', timeout: 20000 });
     } catch (err) {
         await debugDump(page, 'log-in-click-failed');
