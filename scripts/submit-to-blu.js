@@ -202,23 +202,21 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
         throw err;
     }
     await debugDump(page, 'date-picker-open');
-    // Day numbers aren't in textContent (each cell is an empty <div
-    // class="Od3SG9"> -- the visible "1", "2", etc. must be CSS-generated
-    // content), so dump every attribute plus computed ::before/::after
-    // content on each day cell to find where the actual day value lives.
-    const cellDetail = await page.locator('.wixui-date-picker__calendar td').evaluateAll((tds) =>
-        tds.map((td, i) => {
-            const div = td.querySelector('div');
-            const target = div || td;
-            const before = getComputedStyle(target, '::before').content;
-            const after = getComputedStyle(target, '::after').content;
-            const attrs = {};
-            for (const a of target.attributes) attrs[a.name] = a.value;
-            return { i, tdClass: td.className, divAttrs: attrs, before, after, ariaLabel: target.getAttribute('aria-label') };
-        })
+    // Neither textContent nor ::before/::after content nor attributes on
+    // the inner div showed a day number -- dump raw outerHTML for the
+    // first ~15 cells (covers the first two visible weeks) to see exactly
+    // what's actually there, shadow DOM included if present.
+    const cellHtml = await page.locator('.wixui-date-picker__calendar td').evaluateAll((tds) =>
+        tds.slice(0, 15).map((td, i) => ({
+            i,
+            outerHTML: td.outerHTML,
+            shadowHTML: td.querySelector('div') && td.querySelector('div').shadowRoot
+                ? td.querySelector('div').shadowRoot.innerHTML
+                : null,
+        }))
     ).catch((err) => [{ error: String(err) }]);
-    fs.writeFileSync(path.join(__dirname, 'dry-run', 'debug-date-picker-cells.json'), JSON.stringify(cellDetail, null, 1));
-    throw new Error('date picker inspection checkpoint -- see debug-date-picker-cells.json');
+    fs.writeFileSync(path.join(__dirname, 'dry-run', 'debug-date-picker-html.json'), JSON.stringify(cellHtml, null, 1));
+    throw new Error('date picker inspection checkpoint -- see debug-date-picker-html.json');
 
     // crashOccurred intentionally left unchecked -- these are obstruction
     // reports, not crash reports.
