@@ -2,9 +2,11 @@
   "name": "improve-detroit",
   "private": true,
   "scripts": {
-    "import-history": "node scripts/import-seeclickfix-history.js"
+    "import-history": "node scripts/import-seeclickfix-history.js",
+    "submit-to-blu": "node scripts/submit-to-blu.js"
   },
   "dependencies": {
-    "firebase-admin": "^12.6.0"
+    "firebase-admin": "^12.6.0",
+    "playwright": "^1.47.0"
   }
 }

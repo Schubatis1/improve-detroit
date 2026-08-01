@@ -1,0 +1,39 @@
+name: Submit pending reports to Bike Lane Uprising
+
+on:
+  schedule:
+    # Every 30 minutes. BLU has no public API, so this drives their real
+    # submit form with Playwright -- see scripts/submit-to-blu.js.
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Fill out each form and screenshot it without clicking Submit'
+        type: boolean
+        default: false
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - run: npx playwright install --with-deps chromium
+
+      - run: node scripts/submit-to-blu.js ${{ inputs.dry_run && '--dry-run' || '' }}
+        env:
+          BLU_EMAIL: ${{ secrets.BLU_EMAIL }}
+          BLU_PASSWORD: ${{ secrets.BLU_PASSWORD }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+
+      - if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: blu-dry-run-screenshots
+          path: scripts/dry-run/

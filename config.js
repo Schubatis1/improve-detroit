@@ -75,6 +75,12 @@ window.APP_CONFIG = {
                 descriptions: [
                     'Valet operator at the GAR Building (Sexy Steak, 1942 Grand River) is using the Grand River bicycle lane as a staging area, blocking the bike lane. This is a recurring problem -- see previous {{PRIOR_COMPLAINTS}}.',
                 ],
+                // Bike Lane Uprising's "Obstruction Type" category for this
+                // report -- must exactly match one of the option labels on
+                // bikelaneuprising.com/submit (see scripts/submit-to-blu.js).
+                // Falls back to "Private Owner Vehicle" for any workflow
+                // that doesn't set this (defaultWorkflow included).
+                bluCategory: 'Company Vehicle',
                 // priorComplaintIds is NOT set here -- it's computed at
                 // runtime in index.html from every synced history entry
                 // whose geofenceId matches this geofence's id ('gar-building'),
