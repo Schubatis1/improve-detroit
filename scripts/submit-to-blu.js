@@ -106,6 +106,7 @@ async function dismissOverlays(page) {
     const dismissers = [
         page.getByRole('button', { name: /accept all|accept|got it/i }).first(),
         page.getByRole('button', { name: /^close$/i }).first(),
+        page.locator('[aria-label="Close" i], [data-hook*="close" i], [title="Close" i]').first(),
     ];
     for (const button of dismissers) {
         try {
@@ -190,8 +191,16 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
     // work -- "element is not editable"), so open it and dump what its
     // popup actually looks like rather than guess blind.
     const takenAt = entry.photoTakenAt ? new Date(entry.photoTakenAt) : new Date();
-    await page.getByPlaceholder('Select date').click();
-    await page.waitForTimeout(500);
+    try {
+        // force: true -- a stray overlay div (donation banner, most likely;
+        // dismissOverlays' close-button match isn't catching it every time)
+        // was observed intercepting pointer events on this exact field.
+        await page.getByPlaceholder('Select date').click({ force: true });
+        await page.waitForTimeout(500);
+    } catch (err) {
+        await debugDump(page, 'date-picker-click-failed');
+        throw err;
+    }
     await debugDump(page, 'date-picker-open');
     throw new Error('date picker inspection checkpoint -- see debug-date-picker-open.png/json');
 
