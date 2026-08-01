@@ -265,7 +265,9 @@ async function main() {
                 console.log(`  Submitted #${issueId}.`);
             } catch (err) {
                 console.error(`  Failed to submit #${issueId}: ${err.message}`);
-                await doc.ref.set({ bluStatus: 'failed', bluError: err.message }, { merge: true });
+                if (!args.dryRun) {
+                    await doc.ref.set({ bluStatus: 'failed', bluError: err.message }, { merge: true });
+                }
             } finally {
                 fs.rmSync(tempPhotoPath, { force: true });
             }
