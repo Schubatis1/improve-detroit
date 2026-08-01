@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Mirrors pending "You Can't Park Here" submissions to Bike Lane Uprising
+ * Mirrors pending "You Can't Park There" submissions to Bike Lane Uprising
  * (bikelaneuprising.com), which has no public API -- this drives the real
  * submit form with Playwright instead of replicating BLU's internal
  * Wix/Cognito auth exchange. Meant to run on a schedule (see
@@ -70,7 +70,11 @@ async function downloadToTempFile(url, destPath) {
 }
 
 async function loginToBlu(page, email, password) {
-    await page.goto(SUBMIT_URL, { waitUntil: 'networkidle' });
+    // Wix pages never go network-idle (constant frog.wix.com/telemetry
+    // background traffic), so 'networkidle' reliably times out here --
+    // wait for the DOM plus a real element instead.
+    await page.goto(SUBMIT_URL, { waitUntil: 'domcontentloaded' });
+    await page.locator('input[type="file"]').first().waitFor({ state: 'attached', timeout: 30000 });
 
     const alreadyLoggedIn = await page.getByRole('button', { name: /log out/i }).count();
     if (alreadyLoggedIn > 0) return;
@@ -84,7 +88,8 @@ async function loginToBlu(page, email, password) {
 }
 
 async function fillSubmitForm(page, entry, photoPath, notes) {
-    await page.goto(SUBMIT_URL, { waitUntil: 'networkidle' });
+    await page.goto(SUBMIT_URL, { waitUntil: 'domcontentloaded' });
+    await page.locator('input[type="file"]').first().waitFor({ state: 'attached', timeout: 30000 });
 
     // The visible photo input is the first file input on the page.
     await page.locator('input[type="file"]').first().setInputFiles(photoPath);
