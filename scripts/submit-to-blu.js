@@ -222,16 +222,23 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
         throw err;
     }
 
-    // The time field is also a read-only custom widget; inspect it the
-    // same way the date field was inspected, in the same run, to avoid
-    // another full debug round-trip.
+    // The time field ("--:-- AM" with spinner arrows, type="tel") looks
+    // like a segmented hour/minute/AM-PM input rather than a popup list --
+    // try typing the digits directly after focusing it.
     try {
         await page.getByLabel('Time Picker').click({ force: true });
-        await page.waitForTimeout(500);
-        await debugDump(page, 'time-picker-open');
-        throw new Error('time picker inspection checkpoint -- see debug-time-picker-open.png/json');
+        await page.waitForTimeout(200);
+        let hour12 = takenAt.getHours() % 12;
+        if (hour12 === 0) hour12 = 12;
+        const hh = String(hour12).padStart(2, '0');
+        const mm = String(takenAt.getMinutes()).padStart(2, '0');
+        const ampm = takenAt.getHours() >= 12 ? 'PM' : 'AM';
+        await page.keyboard.type(`${hh}${mm}${ampm}`, { delay: 50 });
+        await page.waitForTimeout(300);
+        await debugDump(page, 'time-picker-typed');
+        throw new Error('time picker typing checkpoint -- see debug-time-picker-typed.png');
     } catch (err) {
-        if (!/inspection checkpoint/.test(err.message)) await debugDump(page, 'time-picker-failed');
+        if (!/typing checkpoint/.test(err.message)) await debugDump(page, 'time-picker-failed');
         throw err;
     }
 
