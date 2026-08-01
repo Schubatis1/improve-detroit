@@ -202,21 +202,23 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
         throw err;
     }
     await debugDump(page, 'date-picker-open');
-    const calendarDetail = await page.locator('.wixui-date-picker__calendar').evaluate((el) => {
-        const describe = (node, depth) => {
-            if (depth > 6 || !node) return null;
-            const kids = Array.from(node.children || []).map((c) => describe(c, depth + 1)).filter(Boolean);
-            return {
-                tag: node.tagName,
-                class: node.className && node.className.toString(),
-                text: node.children.length === 0 ? (node.textContent || '').trim() : undefined,
-                kids: kids.length ? kids : undefined,
-            };
-        };
-        return describe(el, 0);
-    }).catch((err) => ({ error: String(err) }));
-    fs.writeFileSync(path.join(__dirname, 'dry-run', 'debug-date-picker-open-tree.json'), JSON.stringify(calendarDetail, null, 1));
-    throw new Error('date picker inspection checkpoint -- see debug-date-picker-open-tree.json');
+    // Day numbers aren't in textContent (each cell is an empty <div
+    // class="Od3SG9"> -- the visible "1", "2", etc. must be CSS-generated
+    // content), so dump every attribute plus computed ::before/::after
+    // content on each day cell to find where the actual day value lives.
+    const cellDetail = await page.locator('.wixui-date-picker__calendar td').evaluateAll((tds) =>
+        tds.map((td, i) => {
+            const div = td.querySelector('div');
+            const target = div || td;
+            const before = getComputedStyle(target, '::before').content;
+            const after = getComputedStyle(target, '::after').content;
+            const attrs = {};
+            for (const a of target.attributes) attrs[a.name] = a.value;
+            return { i, tdClass: td.className, divAttrs: attrs, before, after, ariaLabel: target.getAttribute('aria-label') };
+        })
+    ).catch((err) => [{ error: String(err) }]);
+    fs.writeFileSync(path.join(__dirname, 'dry-run', 'debug-date-picker-cells.json'), JSON.stringify(cellDetail, null, 1));
+    throw new Error('date picker inspection checkpoint -- see debug-date-picker-cells.json');
 
     // crashOccurred intentionally left unchecked -- these are obstruction
     // reports, not crash reports.
