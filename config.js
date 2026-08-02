@@ -16,6 +16,13 @@ window.APP_CONFIG = {
         requestTypeId: '22880',
         natureQuestionId: '32751',
         timingQuestionId: '33446',
+        // "Potholes" (id 7047) -- also used, deliberately, for any non-vehicle
+        // bike lane issue (glass, sand, garbage bins, construction debris,
+        // actual potholes, etc.). Counterintuitive, but this is the request
+        // type that routes to Detroit's General Services Dept, who handle
+        // non-parking-related bike lane maintenance. See classifyPhotoWithGemini()
+        // and the "other" branch of processQueueItem() in index.html.
+        potholeRequestTypeId: '7047',
     },
 
     googleMapsApiKey: 'AIzaSyAts-aj_Ezg_OtGj05Tkh8kXRLPUcA9fAg',

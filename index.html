@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.11.0)</title>
+    <title>You Can't Park There (v3.12.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -37,7 +37,7 @@
          file -- bump it (matching APP_VERSION below) whenever config.js or
          this file changes, so a browser that loaded the page just before a
          deploy doesn't keep running stale config after a normal refresh. -->
-    <script src="config.js?v=3.11.0"></script>
+    <script src="config.js?v=3.12.0"></script>
     <!-- Firebase (compat build, so it works as a plain global like the rest
          of this no-build page) -- syncs submission history to Firestore. -->
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -77,11 +77,6 @@
             <p class="font-montserrat font-bold text-detroit-dark">Menu</p>
             <button id="menuCloseBtn" aria-label="Close menu" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark">&times;</button>
         </div>
-        <label class="text-left text-xs font-bold text-detroit-navy uppercase pt-2">Plate Detection Source</label>
-        <select id="plateSourceSelect" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1 mb-2">
-            <option value="platerecognizer">Plate Recognizer</option>
-            <option value="gemini">Gemini (also detects make/model/color)</option>
-        </select>
         <button id="debugToggleBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Show Debug Console
         </button>
@@ -297,7 +292,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.11.0</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.12.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -341,14 +336,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.11.0)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.12.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.11.0)...
+            App initialized (v3.12.0)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -360,7 +355,7 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.11.0';
+        const APP_VERSION = '3.12.0';
         const CONFIG = window.APP_CONFIG;
 
         // Firestore is the source of truth for submission history. Auth is
@@ -405,7 +400,7 @@
         // it's fetched from Firestore (users/{uid}/config/secrets, field
         // "geminiApiKey") once signed in; firestore.rules restricts reads to
         // the one authorized account and allows no client writes at all.
-        // Gemini detection (recognizePlateWithGemini) awaits this before
+        // Gemini classification (classifyPhotoWithGemini) awaits this before
         // firing so it doesn't race a slow fetch with an early photo upload.
         let resolveGeminiKeyReady;
         const geminiKeyReady = new Promise((resolve) => { resolveGeminiKeyReady = resolve; });
@@ -567,20 +562,6 @@
         const debugToggleBtn = document.getElementById('debugToggleBtn');
         const debugPanel = document.getElementById('debugPanel');
 
-        // Plate detection source (Plate Recognizer vs Gemini), persisted so
-        // it survives reloads. Read at the top of recognizePlate() per photo
-        // -- switching mid-session only affects photos processed afterward.
-        const PLATE_SOURCE_KEY = 'plateDetectionSource';
-        const plateSourceSelect = document.getElementById('plateSourceSelect');
-        plateSourceSelect.value = localStorage.getItem(PLATE_SOURCE_KEY) || 'platerecognizer';
-        function getPlateSource() {
-            return plateSourceSelect.value;
-        }
-        plateSourceSelect.addEventListener('change', () => {
-            localStorage.setItem(PLATE_SOURCE_KEY, plateSourceSelect.value);
-            logToConsole(`Plate detection source set to "${plateSourceSelect.value}" -- applies to photos added from now on.`);
-        });
-
         function openMenu() {
             sideMenu.classList.remove('-translate-x-full');
             menuBackdrop.classList.remove('hidden');
@@ -648,21 +629,26 @@
         renderHistory();
         initHistorySync();
 
-        // Fetch the real picklist options for request type 22880 once, up front,
-        // instead of guessing answer strings. Falls back to the one known-good
-        // value if the request type schema can't be reached.
-        let requestTypeSchemaPromise = null;
-        function getRequestTypeSchema() {
-            if (!requestTypeSchemaPromise) {
-                requestTypeSchemaPromise = fetchRequestTypeSchema();
+        // Fetch the real picklist/question schema for a request type once per
+        // id, up front, instead of guessing answer strings or question_ids.
+        // Used for both request_type 22880 (vehicle-blocking-bike-lane) and
+        // 7047 (Potholes, also used for every non-vehicle bike lane issue --
+        // see classifyPhotoWithGemini). Falls back to known-good defaults for
+        // 22880's nature-of-issue picklist if the schema can't be reached;
+        // 7047's question ids have no such fallback since they're looked up
+        // by matching question text (see findQuestionId).
+        const requestTypeSchemaCache = new Map();
+        function getRequestTypeSchema(requestTypeId) {
+            if (!requestTypeSchemaCache.has(requestTypeId)) {
+                requestTypeSchemaCache.set(requestTypeId, fetchRequestTypeSchema(requestTypeId));
             }
-            return requestTypeSchemaPromise;
+            return requestTypeSchemaCache.get(requestTypeId);
         }
 
-        async function fetchRequestTypeSchema() {
+        async function fetchRequestTypeSchema(requestTypeId) {
             try {
-                logToConsole(`Fetching question schema for request type ${CONFIG.seeClickFix.requestTypeId}...`);
-                const targetUrl = `https://seeclickfix.com/api/v2/request_types/${CONFIG.seeClickFix.requestTypeId}`;
+                logToConsole(`Fetching question schema for request type ${requestTypeId}...`);
+                const targetUrl = `https://seeclickfix.com/api/v2/request_types/${requestTypeId}`;
                 const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
                 const response = await fetch(proxyUrl, {
                     headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` }
@@ -677,6 +663,20 @@
                 logToConsole(`Could not load question schema, falling back to known-good defaults: ${err instanceof Error ? err.message : err}`, true);
                 return null;
             }
+        }
+
+        // Finds a question's primary_key by matching (a substring of) its
+        // text, case-insensitively -- used for request type 7047's questions,
+        // which (unlike 22880's) aren't worth hardcoding ids for since
+        // they're only touched by the pothole-routing workaround.
+        function findQuestionId(schema, textIncludes) {
+            if (!schema || !Array.isArray(schema.questions)) return null;
+            const needle = textIncludes.toLowerCase();
+            const q = schema.questions.find((q) =>
+                typeof q.question === 'string' && q.question.toLowerCase().includes(needle)
+            );
+            if (!q) return null;
+            return String(q.primary_key ?? q.id ?? '') || null;
         }
 
         function getNatureSelectValues(schema) {
@@ -760,7 +760,7 @@
                         <textarea data-role="description" rows="2" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1"></textarea>
                     </div>
 
-                    <div>
+                    <div data-role="natureWrap">
                         <label class="text-xs font-bold text-detroit-navy uppercase">Nature of Issue</label>
                         <select data-role="nature" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
                             <option value="">Loading options...</option>
@@ -769,15 +769,9 @@
                         <p class="text-[10px] text-slate-400 mt-1">Improve Detroit only accepts one of the listed options; custom text may be rejected.</p>
                     </div>
 
-                    <div>
+                    <div data-role="timingWrap">
                         <label class="text-xs font-bold text-detroit-navy uppercase">Violation Timing</label>
                         <input type="text" data-role="timing" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
-                    </div>
-
-                    <div data-role="vehicleWrap" class="hidden">
-                        <label class="text-xs font-bold text-detroit-navy uppercase">Vehicle (optional)</label>
-                        <input type="text" data-role="vehicle" placeholder="Make/model/color" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
-                        <p class="text-[10px] text-slate-400 mt-1">Detected by Gemini -- please verify before submitting.</p>
                     </div>
 
                     <div data-role="vehicleWrap" class="hidden">
@@ -786,10 +780,16 @@
                         <p class="text-[10px] text-slate-400 mt-1">AI-detected make/model/color -- please verify before submitting.</p>
                     </div>
 
-                    <div>
+                    <div data-role="plateWrap">
                         <label class="text-xs font-bold text-detroit-navy uppercase">License Plate (optional)</label>
                         <input type="text" data-role="plate" placeholder="Auto-detecting..." class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
-                        <p class="text-[10px] text-slate-400 mt-1">AI-detected from the photo -- please verify before submitting.</p>
+                        <p class="text-[10px] text-slate-400 mt-1" data-role="plateNote">AI-detected from the photo -- please verify before submitting.</p>
+                    </div>
+
+                    <div data-role="crossStreetsWrap" class="hidden">
+                        <label class="text-xs font-bold text-detroit-navy uppercase">Closest Cross Streets</label>
+                        <input type="text" data-role="crossStreets" placeholder="Looking up..." class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                        <p class="text-[10px] text-slate-400 mt-1">Auto-detected from the photo's location -- please verify.</p>
                     </div>
 
                     <div>
@@ -823,12 +823,18 @@
                 coords: wrapper.querySelector('[data-role="coords"]'),
                 summary: wrapper.querySelector('[data-role="summary"]'),
                 description: wrapper.querySelector('[data-role="description"]'),
+                natureWrap: wrapper.querySelector('[data-role="natureWrap"]'),
                 nature: wrapper.querySelector('[data-role="nature"]'),
                 natureCustom: wrapper.querySelector('[data-role="natureCustom"]'),
+                timingWrap: wrapper.querySelector('[data-role="timingWrap"]'),
                 timing: wrapper.querySelector('[data-role="timing"]'),
                 vehicleWrap: wrapper.querySelector('[data-role="vehicleWrap"]'),
                 vehicle: wrapper.querySelector('[data-role="vehicle"]'),
+                plateWrap: wrapper.querySelector('[data-role="plateWrap"]'),
                 plate: wrapper.querySelector('[data-role="plate"]'),
+                plateNote: wrapper.querySelector('[data-role="plateNote"]'),
+                crossStreetsWrap: wrapper.querySelector('[data-role="crossStreetsWrap"]'),
+                crossStreets: wrapper.querySelector('[data-role="crossStreets"]'),
                 bluCategory: wrapper.querySelector('[data-role="bluCategory"]'),
                 submitBtn: wrapper.querySelector('[data-role="submitBtn"]'),
                 itemMsg: wrapper.querySelector('[data-role="itemMsg"]'),
@@ -853,6 +859,29 @@
             queue.push(item);
             processQueueItem(item);
             return item;
+        }
+
+        // Looks up the nearest intersection to a point via Google's Geocoding
+        // API's result_type=intersection filter, for request type 7047's
+        // required "closest cross streets" question. Returns just the
+        // intersection ("Cass Ave & W Grand Blvd") rather than the full
+        // formatted_address. Returns null if Google has no intersection
+        // nearby (e.g. mid-block with no nearby cross street) -- callers
+        // should fall back to the already-resolved street address instead of
+        // submitting an empty required field.
+        async function getCrossStreets(lat, lng) {
+            try {
+                const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&result_type=intersection&key=${CONFIG.googleMapsApiKey}`;
+                const res = await fetch(url);
+                if (!res.ok) return null;
+                const data = await res.json();
+                if (data.status === 'OK' && data.results.length > 0) {
+                    return data.results[0].formatted_address.split(',')[0].trim();
+                }
+                return null;
+            } catch {
+                return null;
+            }
         }
 
         // Extract EXIF GPS/timestamp and reverse-geocode, then populate the editable fields
@@ -899,51 +928,136 @@
                     logToConsole(`[${item.file.name}] Google Maps returned status: ${geoData.status}. Using coordinates as address fallback.`, true);
                 }
 
-                const schema = await getRequestTypeSchema();
-                const natureValues = getNatureSelectValues(schema);
-                item.els.nature.innerHTML = natureValues.map((v) =>
-                    `<option value="${escapeHtml(v.key)}">${escapeHtml(v.name)}</option>`
-                ).join('') + '<option value="__custom__">Custom...</option>';
-                item.vehicleQuestionId = getVehicleInfoQuestionId(schema);
-                if (!item.vehicleQuestionId) {
-                    logToConsole(`[${item.file.name}] Could not find the vehicle/plate question in the schema -- plate field will show but won't be submitted.`, true);
-                }
-
-                const { workflow, geofence } = resolveWorkflow(item.lat, item.lng);
-                item.workflow = workflow;
-                item.matchedGeofence = geofence;
-                if (workflow.bluCategory) item.els.bluCategory.value = workflow.bluCategory;
-                if (geofence) {
-                    logToConsole(`[${item.file.name}] Within ${geofence.radiusMeters}m of geofence "${geofence.name}" -- using its workflow.`);
-                    // Give Firestore history a few seconds to load on a cold
-                    // start; proceed with whatever's cached (possibly none)
-                    // if it doesn't arrive in time rather than blocking forever.
-                    await Promise.race([historyReady, new Promise((resolve) => setTimeout(resolve, 4000))]);
-                    const priorComplaintIds = getPriorComplaintIdsForGeofence(geofence.id);
-                    if (priorComplaintIds.length > 0) {
-                        workflow.priorComplaintIds = priorComplaintIds;
-                        logToConsole(`[${item.file.name}] Citing ${priorComplaintIds.length} prior complaint(s) for this geofence: ${priorComplaintIds.join(', ')}`);
-                    }
-                }
-
-                const autoDescription = pickRandomDescription(workflow, address);
-                item.autoDescriptionValue = autoDescription;
-
-                // Pre-fill the editor; every field stays fully mutable before submission.
                 item.els.address.value = address;
-                item.els.summary.value = workflow.summary;
-                item.els.description.value = autoDescription;
-                item.els.nature.value = pickDefaultNatureValue(natureValues);
-                item.els.timing.value = photoTimeString;
 
-                item.els.statusBadge.textContent = 'Ready to submit';
-                item.els.statusBadge.className = 'text-xs font-bold uppercase mt-1 text-detroit-dark';
-                item.els.fields.classList.remove('hidden');
-                item.els.fields.classList.add('flex');
-                item.status = 'ready';
+                logToConsole(`[${item.file.name}] Classifying photo with Gemini...`);
+                item.els.statusBadge.textContent = 'Classifying photo...';
+                const classification = await classifyPhotoWithGemini(item);
+                item.category = classification.category;
 
-                initMiniMap(item);
-                recognizePlate(item);
+                if (classification.category === 'vehicle') {
+                    const schema = await getRequestTypeSchema(CONFIG.seeClickFix.requestTypeId);
+                    const natureValues = getNatureSelectValues(schema);
+                    item.els.nature.innerHTML = natureValues.map((v) =>
+                        `<option value="${escapeHtml(v.key)}">${escapeHtml(v.name)}</option>`
+                    ).join('') + '<option value="__custom__">Custom...</option>';
+                    item.vehicleQuestionId = getVehicleInfoQuestionId(schema);
+                    if (!item.vehicleQuestionId) {
+                        logToConsole(`[${item.file.name}] Could not find the vehicle/plate question in the schema -- plate field will show but won't be submitted.`, true);
+                    }
+
+                    const { workflow, geofence } = resolveWorkflow(item.lat, item.lng);
+                    item.workflow = workflow;
+                    item.matchedGeofence = geofence;
+                    if (workflow.bluCategory) item.els.bluCategory.value = workflow.bluCategory;
+                    if (geofence) {
+                        logToConsole(`[${item.file.name}] Within ${geofence.radiusMeters}m of geofence "${geofence.name}" -- using its workflow.`);
+                        // Give Firestore history a few seconds to load on a cold
+                        // start; proceed with whatever's cached (possibly none)
+                        // if it doesn't arrive in time rather than blocking forever.
+                        await Promise.race([historyReady, new Promise((resolve) => setTimeout(resolve, 4000))]);
+                        const priorComplaintIds = getPriorComplaintIdsForGeofence(geofence.id);
+                        if (priorComplaintIds.length > 0) {
+                            workflow.priorComplaintIds = priorComplaintIds;
+                            logToConsole(`[${item.file.name}] Citing ${priorComplaintIds.length} prior complaint(s) for this geofence: ${priorComplaintIds.join(', ')}`);
+                        }
+                    }
+
+                    const autoDescription = pickRandomDescription(workflow, address);
+                    item.autoDescriptionValue = autoDescription;
+
+                    // Pre-fill the editor; every field stays fully mutable before submission.
+                    item.els.summary.value = workflow.summary;
+                    item.els.description.value = autoDescription;
+                    item.els.nature.value = pickDefaultNatureValue(natureValues);
+                    item.els.timing.value = photoTimeString;
+
+                    item.els.natureWrap.classList.remove('hidden');
+                    item.els.timingWrap.classList.remove('hidden');
+                    item.els.plateWrap.classList.remove('hidden');
+                    item.els.crossStreetsWrap.classList.add('hidden');
+
+                    item.els.plate.value = classification.plate ? classification.plate.toUpperCase() : '';
+                    item.els.plate.placeholder = classification.plate ? '' : 'No plate detected';
+                    const vehicleParts = [classification.color, classification.make, classification.model].filter(Boolean);
+                    if (vehicleParts.length > 0) {
+                        item.els.vehicle.value = vehicleParts.join(' ');
+                        item.els.vehicle.placeholder = '';
+                        item.els.vehicleWrap.classList.remove('hidden');
+                        logToConsole(`[${item.file.name}] Vehicle detected: ${vehicleParts.join(' ')} -- please verify.`);
+                    } else {
+                        item.els.vehicle.placeholder = 'No vehicle details detected';
+                        item.els.vehicleWrap.classList.remove('hidden');
+                    }
+                    if (classification.plate) {
+                        logToConsole(`[${item.file.name}] Plate detected: ${item.els.plate.value} -- please verify.`);
+                        applyPlateWorkflow(item, classification.plate);
+                    } else {
+                        logToConsole(`[${item.file.name}] No plate detected in photo.`);
+                    }
+
+                    item.els.statusBadge.textContent = 'Ready to submit';
+                    item.els.statusBadge.className = 'text-xs font-bold uppercase mt-1 text-detroit-dark';
+                    item.els.fields.classList.remove('hidden');
+                    item.els.fields.classList.add('flex');
+                    item.status = 'ready';
+
+                    initMiniMap(item);
+                    // Cross-check against Plate Recognizer -- non-blocking,
+                    // updates the plate field/note in place once it resolves.
+                    crossCheckPlate(item, classification.plate);
+
+                } else {
+                    // "Other" bike lane issue (glass, sand, garbage bin,
+                    // construction debris, an actual pothole, etc.) --
+                    // deliberately routed through request type 7047
+                    // ("Potholes"), the one that reaches Detroit's General
+                    // Services Dept for non-parking-related bike lane
+                    // maintenance. See config.js's potholeRequestTypeId.
+                    const potholeSchema = await getRequestTypeSchema(CONFIG.seeClickFix.potholeRequestTypeId);
+                    item.potholeQuestionIds = {
+                        potholeOrSinkhole: findQuestionId(potholeSchema, 'pothole or a sinkhole'),
+                        roadOrSidewalk: findQuestionId(potholeSchema, 'road or a sidewalk'),
+                        crossStreets: findQuestionId(potholeSchema, 'cross streets'),
+                        count: findQuestionId(potholeSchema, 'how many potholes'),
+                        size: findQuestionId(potholeSchema, 'approximate size of the pothole'),
+                    };
+                    if (!item.potholeQuestionIds.crossStreets) {
+                        logToConsole(`[${item.file.name}] Could not find the cross-streets question in request type ${CONFIG.seeClickFix.potholeRequestTypeId}'s schema -- submission will likely fail.`, true);
+                    }
+
+                    let description = classification.description || 'Bike lane maintenance issue reported.';
+                    if (classification.suggest_sweep) {
+                        description += ' Requesting the City sweep the bike lane to clear this debris.';
+                    }
+
+                    item.els.summary.value = 'Bicycle Lane Maintenance Request';
+                    item.els.description.value = description;
+                    item.els.bluCategory.value = classification.blu_category === 'Construction'
+                        ? 'Construction'
+                        : 'Other  (damaged lane / snow / debris / pedestrian / etc.)';
+
+                    item.els.natureWrap.classList.add('hidden');
+                    item.els.timingWrap.classList.add('hidden');
+                    item.els.vehicleWrap.classList.add('hidden');
+                    item.els.plateWrap.classList.add('hidden');
+                    item.els.crossStreetsWrap.classList.remove('hidden');
+
+                    logToConsole(`[${item.file.name}] Looking up nearest cross streets...`);
+                    const crossStreets = await getCrossStreets(item.lat, item.lng);
+                    item.els.crossStreets.value = crossStreets || address;
+                    if (!crossStreets) {
+                        logToConsole(`[${item.file.name}] No nearby intersection found -- using the resolved street address as a cross-streets fallback.`);
+                    }
+
+                    item.els.statusBadge.textContent = 'Ready to submit';
+                    item.els.statusBadge.className = 'text-xs font-bold uppercase mt-1 text-detroit-dark';
+                    item.els.fields.classList.remove('hidden');
+                    item.els.fields.classList.add('flex');
+                    item.status = 'ready';
+
+                    initMiniMap(item);
+                }
 
             } catch (err) {
                 item.status = 'failed';
@@ -1012,23 +1126,90 @@
             });
         }
 
-        // Best-effort plate/vehicle detection. Runs in parallel with the rest
-        // of processQueueItem rather than blocking it -- a slow or failed
-        // call shouldn't hold up the card becoming ready to submit. Never
-        // writes a value the user hasn't had a chance to see/correct: it only
-        // pre-fills the (already editable) plate/vehicle fields, nothing is
-        // auto-submitted. Dispatches to whichever source is currently
-        // selected in the side menu (see getPlateSource()).
-        async function recognizePlate(item) {
-            item.detectionSource = getPlateSource();
-            if (item.detectionSource === 'gemini') {
-                await recognizePlateWithGemini(item);
-            } else {
-                await recognizePlateWithPlateRecognizer(item);
+        // Classifies a photo via Gemini as either a vehicle blocking the bike
+        // lane or some other bike lane issue (glass, sand, a garbage bin,
+        // construction debris, an actual pothole, etc.), extracting the
+        // relevant details either way -- this determines which SeeClickFix
+        // request type/fields the card uses (see processQueueItem), so a
+        // failure here can't just leave one field blank like the old
+        // plate-only Gemini call could. If Gemini is unreachable this falls
+        // back to "vehicle" with everything null, matching the app's
+        // original always-assume-a-vehicle behavior, so an outage degrades
+        // to manual entry instead of blocking the card outright.
+        async function classifyPhotoWithGemini(item) {
+            const fallback = {
+                category: 'vehicle', plate: null, make: null, model: null, color: null,
+                description: null, suggest_sweep: false, blu_category: null, classificationFailed: true,
+            };
+            try {
+                await geminiKeyReady;
+                if (!CONFIG.geminiApiKey) {
+                    throw new Error('Gemini API key not available (Firestore users/{uid}/config/secrets doc missing, empty, or unreadable)');
+                }
+                logToConsole(`[${item.file.name}] Downscaling photo for Gemini...`);
+                const upload = await downscaleImage(item.file);
+                const base64 = await blobToBase64(upload);
+                logToConsole(`[${item.file.name}] Sending photo to Gemini (${Math.round(upload.size / 1024)}KB)...`);
+
+                const model = 'gemini-flash-latest';
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${CONFIG.geminiApiKey}`;
+                const prompt = 'You are looking at a photo taken to report an issue affecting a bike lane in Detroit. '
+                    + "Classify what's in the photo, then extract details. "
+                    + 'Respond with ONLY a JSON object, no other text, in exactly this shape: '
+                    + '{"category": "vehicle"|"other", "plate": string|null, "make": string|null, '
+                    + '"model": string|null, "color": string|null, "description": string|null, '
+                    + '"suggest_sweep": boolean, "blu_category": "Construction"|"Other"|null}. '
+                    + 'category "vehicle": a car/truck/van is blocking or parked in the bike lane -- fill plate/make/model/color '
+                    + '(null for anything not legible/determinable), leave description null, suggest_sweep false, blu_category null. '
+                    + 'category "other": anything else affecting the bike lane -- broken glass, sand, gravel, a garbage/recycling '
+                    + 'bin, construction materials or equipment, a pothole or sinkhole, other debris, snow, etc. Leave '
+                    + 'plate/make/model/color null. Fill description with one concise, specific sentence describing exactly '
+                    + "what's in the photo and how it affects the bike lane, suitable for a city work-order description. Set "
+                    + 'suggest_sweep true only if the issue is loose material a street sweeper could realistically clear (glass, '
+                    + 'sand, gravel, loose debris), false otherwise (e.g. a stuck bin, construction equipment, a pothole). Set '
+                    + 'blu_category to "Construction" if construction-related, otherwise "Other". '
+                    + 'Use null for anything you cannot determine with reasonable confidence -- do not guess.';
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                { text: prompt },
+                                { inline_data: { mime_type: 'image/jpeg', data: base64 } },
+                            ],
+                        }],
+                        generationConfig: { responseMimeType: 'application/json' },
+                    }),
+                });
+
+                if (!response.ok) {
+                    const errText = await response.text();
+                    throw new Error(`Gemini API Error ${response.status}: ${errText}`);
+                }
+
+                const data = await response.json();
+                const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!text) throw new Error('Gemini returned no content');
+                const result = JSON.parse(text);
+                if (result.category !== 'vehicle' && result.category !== 'other') {
+                    throw new Error(`Gemini returned an unrecognized category: ${result.category}`);
+                }
+
+                logToConsole(`[${item.file.name}] Gemini classified this as "${result.category}".`);
+                return result;
+            } catch (err) {
+                logToConsole(`[${item.file.name}] Gemini classification failed, defaulting to vehicle-blocking-bike-lane flow: ${err instanceof Error ? err.message : err}`, true);
+                return fallback;
             }
         }
 
-        async function recognizePlateWithPlateRecognizer(item) {
+        // Plate Recognizer lookup used as a cross-check against Gemini's
+        // plate reading (see crossCheckPlate) -- pure detection with no DOM
+        // writes, since Gemini is now the primary/default plate source and
+        // this only runs to verify it.
+        async function plateRecognizerLookup(item) {
             try {
                 logToConsole(`[${item.file.name}] Downscaling photo for Plate Recognizer...`);
                 const upload = await downscaleImage(item.file);
@@ -1045,11 +1226,11 @@
                 const targetUrl = 'https://api.platerecognizer.com/v1/plate-reader/';
                 const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
 
-                // A batch upload fires every photo's recognizePlate() at once,
-                // which routinely trips Plate Recognizer's per-second rate
-                // limit (HTTP 429) on the 2nd+ photo. Retry using the wait
-                // time the API itself reports ("Expected available in Xs")
-                // rather than failing the whole card over a transient throttle.
+                // A batch upload fires every photo's lookup at once, which
+                // routinely trips Plate Recognizer's per-second rate limit
+                // (HTTP 429) on the 2nd+ photo. Retry using the wait time the
+                // API itself reports ("Expected available in Xs") rather
+                // than giving up over a transient throttle.
                 const maxAttempts = 4;
                 let response;
                 for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -1076,96 +1257,52 @@
                 const best = (data.results || [])[0];
                 if (best && best.plate) {
                     const confidencePct = Math.round((best.score || 0) * 100);
-                    item.els.plate.value = best.plate.toUpperCase();
-                    item.els.plate.placeholder = '';
-                    logToConsole(`[${item.file.name}] Plate detected: ${best.plate.toUpperCase()} (${confidencePct}% confidence) -- please verify.`);
-                    applyPlateWorkflow(item, best.plate);
-                } else {
-                    item.els.plate.placeholder = 'No plate detected';
-                    logToConsole(`[${item.file.name}] No plate detected in photo.`);
+                    logToConsole(`[${item.file.name}] Plate Recognizer detected: ${best.plate.toUpperCase()} (${confidencePct}% confidence).`);
+                    return best.plate.toUpperCase();
                 }
+                logToConsole(`[${item.file.name}] Plate Recognizer found no plate.`);
+                return null;
             } catch (err) {
-                item.els.plate.placeholder = 'Auto-detection failed -- enter manually';
-                logToConsole(`[${item.file.name}] Plate recognition failed: ${err instanceof Error ? err.message : err}`, true);
+                logToConsole(`[${item.file.name}] Plate Recognizer lookup failed: ${err instanceof Error ? err.message : err}`, true);
+                return null;
             }
         }
 
-        // Vehicle/plate detection via Gemini's vision model, as an
-        // alternative to Plate Recognizer. Sends one still image and asks
-        // for plate + make/model/color back as JSON. Unlike Plate Recognizer,
-        // this also fills the "Vehicle" field, which flows into the same
-        // SeeClickFix "make, model and license plate number" question as the
-        // plate at submit time (see submitItem()).
-        async function recognizePlateWithGemini(item) {
-            try {
-                await geminiKeyReady;
-                if (!CONFIG.geminiApiKey) {
-                    throw new Error('Gemini API key not available (Firestore users/{uid}/config/secrets doc missing, empty, or unreadable)');
-                }
-                logToConsole(`[${item.file.name}] Downscaling photo for Gemini...`);
-                const upload = await downscaleImage(item.file);
-                const base64 = await blobToBase64(upload);
-                logToConsole(`[${item.file.name}] Sending photo to Gemini (${Math.round(upload.size / 1024)}KB)...`);
+        // Cross-checks Gemini's plate reading against Plate Recognizer's.
+        // Runs after the card is already shown (non-blocking), since Plate
+        // Recognizer is slower and now only used for verification, not
+        // primary detection. Updates the plate field/note in place; never
+        // overwrites a plate the user has already started editing.
+        async function crossCheckPlate(item, geminiPlate) {
+            const prPlate = await plateRecognizerLookup(item);
+            if (item.status !== 'ready' && item.status !== 'error') return; // submitted/removed meanwhile
 
-                const model = 'gemini-flash-latest';
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${CONFIG.geminiApiKey}`;
-                const prompt = 'Look at this photo of a vehicle parked in a bike lane. '
-                    + 'Identify: the license plate text (if legible), the vehicle make, '
-                    + 'the vehicle model, and the vehicle color. '
-                    + 'Respond with ONLY a JSON object, no other text, in exactly this shape: '
-                    + '{"plate": string|null, "make": string|null, "model": string|null, "color": string|null}. '
-                    + 'Use null for anything you cannot determine with reasonable confidence -- '
-                    + 'do not guess.';
+            const gPlate = geminiPlate ? geminiPlate.toUpperCase() : null;
+            const userEdited = item.els.plate.value.trim() !== (gPlate || '');
 
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{
-                            parts: [
-                                { text: prompt },
-                                { inline_data: { mime_type: 'image/jpeg', data: base64 } },
-                            ],
-                        }],
-                        generationConfig: { responseMimeType: 'application/json' },
-                    }),
-                });
-
-                if (!response.ok) {
-                    const errText = await response.text();
-                    throw new Error(`Gemini API Error ${response.status}: ${errText}`);
-                }
-
-                const data = await response.json();
-                const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-                if (!text) throw new Error('Gemini returned no content');
-                const result = JSON.parse(text);
-
-                const vehicleParts = [result.color, result.make, result.model].filter(Boolean);
-                if (vehicleParts.length > 0) {
-                    item.els.vehicle.value = vehicleParts.join(' ');
-                    item.els.vehicle.placeholder = '';
-                    item.els.vehicleWrap.classList.remove('hidden');
-                    logToConsole(`[${item.file.name}] Vehicle detected: ${vehicleParts.join(' ')} -- please verify.`);
+            if (gPlate && prPlate) {
+                if (normalizePlate(gPlate) === normalizePlate(prPlate)) {
+                    item.els.plateNote.textContent = 'Confirmed by both Gemini and Plate Recognizer -- no need to double-check.';
+                    item.els.plateNote.className = 'text-[10px] text-detroit-teal font-semibold mt-1';
                 } else {
-                    item.els.vehicle.placeholder = 'No vehicle details detected';
-                    item.els.vehicleWrap.classList.remove('hidden');
+                    item.els.plateNote.textContent = `Providers disagree -- Gemini: ${gPlate}, Plate Recognizer: ${prPlate}. Please check the photo and pick the right one.`;
+                    item.els.plateNote.className = 'text-[10px] text-red-600 font-semibold mt-1';
+                    if (!userEdited) item.els.plate.value = gPlate; // Gemini's stays the default; user picks if it's wrong
                 }
-
-                if (result.plate) {
-                    item.els.plate.value = String(result.plate).toUpperCase();
+            } else if (gPlate && !prPlate) {
+                item.els.plateNote.textContent = 'Only Gemini detected a plate -- please verify.';
+                item.els.plateNote.className = 'text-[10px] text-slate-400 mt-1';
+            } else if (!gPlate && prPlate) {
+                item.els.plateNote.textContent = 'Only Plate Recognizer detected a plate -- please verify.';
+                item.els.plateNote.className = 'text-[10px] text-slate-400 mt-1';
+                if (!userEdited) {
+                    item.els.plate.value = prPlate;
                     item.els.plate.placeholder = '';
-                    logToConsole(`[${item.file.name}] Plate detected: ${item.els.plate.value} -- please verify.`);
-                    applyPlateWorkflow(item, result.plate);
-                } else {
-                    item.els.plate.placeholder = 'No plate detected';
-                    logToConsole(`[${item.file.name}] No plate detected in photo.`);
+                    applyPlateWorkflow(item, prPlate);
                 }
-            } catch (err) {
-                item.els.plate.placeholder = 'Auto-detection failed -- enter manually';
-                item.els.vehicleWrap.classList.remove('hidden');
-                item.els.vehicle.placeholder = 'Auto-detection failed -- enter manually';
-                logToConsole(`[${item.file.name}] Gemini detection failed: ${err instanceof Error ? err.message : err}`, true);
+            } else {
+                item.els.plateNote.textContent = 'No plate detected by either provider -- please verify manually.';
+                item.els.plateNote.className = 'text-[10px] text-slate-400 mt-1';
             }
         }
 
@@ -1200,8 +1337,15 @@
             const pendingCount = queue.filter((i) => i.status === 'ready' || i.status === 'error').length;
             submitAllBar.classList.toggle('hidden', pendingCount === 0);
             submitAllBtn.textContent = `Submit All Queued Photos (${pendingCount})`;
-            combineReportsBtn.classList.toggle('hidden', pendingCount < 2);
-            combineReportsBtn.textContent = `Combine ${pendingCount} Reports Into One`;
+
+            // Combining only makes sense within the same category (a vehicle
+            // report and a pothole report use different SeeClickFix request
+            // types/fields, so they can't merge into one ticket).
+            const combinableCount = queue.filter((i) =>
+                (i.status === 'ready' || i.status === 'error') && i.category === 'vehicle'
+            ).length;
+            combineReportsBtn.classList.toggle('hidden', combinableCount < 2);
+            combineReportsBtn.textContent = `Combine ${combinableCount} Reports Into One`;
         }
 
         submitAllBtn.addEventListener('click', async () => {
@@ -1225,13 +1369,6 @@
             const address = item.els.address.value.trim();
             const summary = item.els.summary.value.trim();
             const description = item.els.description.value.trim();
-            const nature = item.els.nature.value === '__custom__' ? item.els.natureCustom.value.trim() : item.els.nature.value;
-            const timing = item.els.timing.value.trim();
-            const plate = item.els.plate.value.trim();
-            const vehicle = item.els.vehicle.value.trim();
-            // "make, model and license plate number" is a single free-text
-            // SeeClickFix question -- combine both editable fields into it.
-            const vehicleAndPlate = [vehicle, plate].filter(Boolean).join(', ');
 
             item.status = 'submitting';
             item.els.submitBtn.disabled = true;
@@ -1249,13 +1386,48 @@
             formData.append('lat', pos.lat);
             formData.append('lng', pos.lng);
             formData.append('address', address);
-            formData.append('request_type_id', CONFIG.seeClickFix.requestTypeId);
             formData.append('answers[summary]', summary);
             formData.append('answers[description]', description);
-            formData.append(`answers[${CONFIG.seeClickFix.natureQuestionId}]`, nature);
-            formData.append(`answers[${CONFIG.seeClickFix.timingQuestionId}]`, timing);
-            if (item.vehicleQuestionId && vehicleAndPlate) {
-                formData.append(`answers[${item.vehicleQuestionId}]`, vehicleAndPlate);
+
+            if (item.category === 'other') {
+                // Deliberately routed through the Pothole request type -- see
+                // config.js's potholeRequestTypeId and processQueueItem's
+                // "other" branch for why.
+                const crossStreets = item.els.crossStreets.value.trim() || address;
+                formData.append('request_type_id', CONFIG.seeClickFix.potholeRequestTypeId);
+                if (item.potholeQuestionIds.potholeOrSinkhole) {
+                    formData.append(`answers[${item.potholeQuestionIds.potholeOrSinkhole}]`, 'Pothole');
+                }
+                if (item.potholeQuestionIds.roadOrSidewalk) {
+                    // "Is the pothole on a road or a sidewalk?" is a
+                    // multivaluelist question -- SeeClickFix expects an array
+                    // even for a single selection.
+                    formData.append(`answers[${item.potholeQuestionIds.roadOrSidewalk}][]`, 'Road');
+                }
+                if (item.potholeQuestionIds.crossStreets) {
+                    formData.append(`answers[${item.potholeQuestionIds.crossStreets}]`, crossStreets);
+                }
+                if (item.potholeQuestionIds.count) {
+                    formData.append(`answers[${item.potholeQuestionIds.count}]`, 'N/A');
+                }
+                if (item.potholeQuestionIds.size) {
+                    formData.append(`answers[${item.potholeQuestionIds.size}]`, 'N/A');
+                }
+            } else {
+                const nature = item.els.nature.value === '__custom__' ? item.els.natureCustom.value.trim() : item.els.nature.value;
+                const timing = item.els.timing.value.trim();
+                const plate = item.els.plate.value.trim();
+                const vehicle = item.els.vehicle.value.trim();
+                // "make, model and license plate number" is a single free-text
+                // SeeClickFix question -- combine both editable fields into it.
+                const vehicleAndPlate = [vehicle, plate].filter(Boolean).join(', ');
+
+                formData.append('request_type_id', CONFIG.seeClickFix.requestTypeId);
+                formData.append(`answers[${CONFIG.seeClickFix.natureQuestionId}]`, nature);
+                formData.append(`answers[${CONFIG.seeClickFix.timingQuestionId}]`, timing);
+                if (item.vehicleQuestionId && vehicleAndPlate) {
+                    formData.append(`answers[${item.vehicleQuestionId}]`, vehicleAndPlate);
+                }
             }
             formData.append('answers[issue_image]', item.file);
 
@@ -1318,7 +1490,12 @@
         // pipeline (photoDateObj, matchedGeofence, bluCategory) so a merged
         // report mirrors to Bike Lane Uprising exactly like any other.
         function combineReports() {
-            const sourceItems = queue.filter((i) => i.status === 'ready' || i.status === 'error');
+            // Only same-category items can combine -- a vehicle report and a
+            // pothole report use different SeeClickFix request types/fields
+            // and can't merge into one ticket (see updateSubmitAllVisibility).
+            const sourceItems = queue.filter((i) =>
+                (i.status === 'ready' || i.status === 'error') && i.category === 'vehicle'
+            );
             if (sourceItems.length < 2) return;
 
             const primary = sourceItems[0];
@@ -1335,6 +1512,7 @@
                 file: primary.file,
                 previewUrl: primary.previewUrl,
                 status: 'ready',
+                category: 'vehicle',
                 issueId: null,
                 map: null,
                 marker: null,
