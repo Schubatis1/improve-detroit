@@ -20,10 +20,14 @@ window.APP_CONFIG = {
 
     googleMapsApiKey: 'AIzaSyAts-aj_Ezg_OtGj05Tkh8kXRLPUcA9fAg',
     plateRecognizerApiKey: 'be8e6058bc8eeaced36a7a269e2f1e1337074bf7',
-    // Used by the Gemini plate-detection source (Menu > Plate Detection
-    // Source) as an alternative to Plate Recognizer -- also returns the
-    // vehicle's make/model/color, which Plate Recognizer's free tier doesn't.
-    geminiApiKey: 'AQ.Ab8RN6LPaUQJWRRtw8yLYa5OXvnaHmETk7NXc7_ibit-EKf3Vg',
+    // geminiApiKey is intentionally NOT here. It's a service-account-bound
+    // key, so committing it to a public GitHub repo gets it auto-revoked by
+    // Google's abuse scanner (this happened once already). Instead it's
+    // fetched at runtime from Firestore (config/secrets, field
+    // "geminiApiKey") after sign-in -- see index.html's geminiKeyReady/
+    // onAuthStateChanged. Set it once via the Firebase Console; the app
+    // only ever reads it (see firestore.rules -- no client write is
+    // allowed on /config/*).
 
     historyKey: 'clearTheLaneHistory',
 
