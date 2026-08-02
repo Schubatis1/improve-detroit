@@ -20,6 +20,10 @@ window.APP_CONFIG = {
 
     googleMapsApiKey: 'AIzaSyAts-aj_Ezg_OtGj05Tkh8kXRLPUcA9fAg',
     plateRecognizerApiKey: 'be8e6058bc8eeaced36a7a269e2f1e1337074bf7',
+    // Used by the Gemini plate-detection source (Menu > Plate Detection
+    // Source) as an alternative to Plate Recognizer -- also returns the
+    // vehicle's make/model/color, which Plate Recognizer's free tier doesn't.
+    geminiApiKey: 'AQ.Ab8RN6LPaUQJWRRtw8yLYa5OXvnaHmETk7NXc7_ibit-EKf3Vg',
 
     historyKey: 'clearTheLaneHistory',
 
