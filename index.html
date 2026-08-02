@@ -397,7 +397,7 @@
         // Gemini's API key isn't in config.js (that file is committed to a
         // public repo, and Google auto-revokes any service-account-bound key
         // it finds published there -- this happened once already). Instead
-        // it's fetched from Firestore (users/{uid}/config/secrets, field
+        // it's fetched from Firestore (config/secrets, field
         // "geminiApiKey") once signed in; firestore.rules restricts reads to
         // the one authorized account and allows no client writes at all.
         // Gemini classification (classifyPhotoWithGemini) awaits this before
@@ -415,7 +415,7 @@
                 appContent.classList.remove('hidden');
                 currentUid = user.uid;
                 resolveHistorySignedIn(user.uid);
-                firestoreDb.collection('users').doc(user.uid).collection('config').doc('secrets').get()
+                firestoreDb.collection('config').doc('secrets').get()
                     .then((doc) => {
                         CONFIG.geminiApiKey = doc.exists ? doc.data().geminiApiKey : null;
                     })
@@ -1144,7 +1144,7 @@
             try {
                 await geminiKeyReady;
                 if (!CONFIG.geminiApiKey) {
-                    throw new Error('Gemini API key not available (Firestore users/{uid}/config/secrets doc missing, empty, or unreadable)');
+                    throw new Error('Gemini API key not available (Firestore config/secrets doc missing, empty, or unreadable)');
                 }
                 logToConsole(`[${item.file.name}] Downscaling photo for Gemini...`);
                 const upload = await downscaleImage(item.file);

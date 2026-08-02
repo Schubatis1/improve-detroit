@@ -30,11 +30,11 @@ window.APP_CONFIG = {
     // geminiApiKey is intentionally NOT here. It's a service-account-bound
     // key, so committing it to a public GitHub repo gets it auto-revoked by
     // Google's abuse scanner (this happened once already). Instead it's
-    // fetched at runtime from Firestore (users/{uid}/config/secrets, field
+    // fetched at runtime from Firestore (config/secrets, field
     // "geminiApiKey") after sign-in -- see index.html's geminiKeyReady/
     // onAuthStateChanged. Set it once via the Firebase Console; the app
     // only ever reads it (see firestore.rules -- no client write is
-    // allowed on /users/{uid}/config/*).
+    // allowed on /config/*).
 
     historyKey: 'clearTheLaneHistory',
 
