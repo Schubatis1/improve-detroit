@@ -8,6 +8,17 @@ service cloud.firestore {
         && request.auth.token.email_verified == true;
     }
 
+    // Materialized plate -> incidents index (see index.html's
+    // platesCollection/addToHistory) -- one doc per plate, each holding the
+    // ids of every history doc it's linked to. Same owner-only rule as
+    // history above.
+    match /users/{uid}/plates/{plateId} {
+      allow read, write: if request.auth != null
+        && request.auth.uid == uid
+        && request.auth.token.email == 'aschubatis@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
     // Runtime secrets (config/secrets: { geminiApiKey }) that shouldn't live
     // in config.js, since that file is committed to a public repo and
     // Google auto-revokes any service-account-bound key it finds there.
