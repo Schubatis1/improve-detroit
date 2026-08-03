@@ -930,9 +930,17 @@
 
                 item.els.address.value = address;
 
+                // Resolved before classification (needs only lat/lng, both
+                // already known) so classifyPhotoWithGemini knows up front
+                // whether this is inside a geofence -- geofenced incidents
+                // keep their exact configured wording untouched and never
+                // get an AI-authored description (see resolveWorkflow's
+                // geofence-override semantics).
+                const { workflow, geofence } = resolveWorkflow(item.lat, item.lng);
+
                 logToConsole(`[${item.file.name}] Classifying photo with Gemini...`);
                 item.els.statusBadge.textContent = 'Classifying photo...';
-                const classification = await classifyPhotoWithGemini(item);
+                const classification = await classifyPhotoWithGemini(item, workflow, geofence, address);
                 item.category = classification.category;
 
                 if (classification.category === 'vehicle') {
@@ -946,7 +954,6 @@
                         logToConsole(`[${item.file.name}] Could not find the vehicle/plate question in the schema -- plate field will show but won't be submitted.`, true);
                     }
 
-                    const { workflow, geofence } = resolveWorkflow(item.lat, item.lng);
                     item.workflow = workflow;
                     item.matchedGeofence = geofence;
                     if (workflow.bluCategory) item.els.bluCategory.value = workflow.bluCategory;
@@ -963,7 +970,16 @@
                         }
                     }
 
-                    const autoDescription = pickRandomDescription(workflow, address);
+                    // Geofenced incidents never get an AI-authored description
+                    // (see classifyPhotoWithGemini) -- they always use the
+                    // geofence's own configured wording verbatim. Outside a
+                    // geofence, Gemini writes the description itself starting
+                    // from the rotating list; it returns null instead if the
+                    // photo was too unclear to verify against, in which case
+                    // an unmodified template is used as-is.
+                    const autoDescription = (!geofence && classification.description)
+                        ? classification.description
+                        : pickRandomDescription(workflow, address);
                     item.autoDescriptionValue = autoDescription;
 
                     // Pre-fill the editor; every field stays fully mutable before submission.
@@ -1136,7 +1152,13 @@
         // back to "vehicle" with everything null, matching the app's
         // original always-assume-a-vehicle behavior, so an outage degrades
         // to manual entry instead of blocking the card outright.
-        async function classifyPhotoWithGemini(item) {
+        // workflow/geofence/address are resolved by the caller (from
+        // lat/lng, already known before this is called) purely so this
+        // function can decide, before it ever sees the photo, whether the
+        // vehicle-description prompt below should ask Gemini to write a
+        // description at all -- geofenced incidents skip that entirely and
+        // keep their exact configured wording (see processQueueItem).
+        async function classifyPhotoWithGemini(item, workflow, geofence, address) {
             const fallback = {
                 category: 'vehicle', plate: null, make: null, model: null, color: null,
                 description: null, suggest_sweep: false, blu_category: null, classificationFailed: true,
@@ -1153,6 +1175,29 @@
 
                 const model = 'gemini-flash-latest';
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${CONFIG.geminiApiKey}`;
+
+                // Outside a geofence, give Gemini the rotating description
+                // list (with {{ADDRESS}}/{{PRIOR_COMPLAINTS}} already filled
+                // in) as candidate starting points, same as the non-AI
+                // pickRandomDescription fallback would use.
+                const candidateDescriptions = geofence ? null : workflow.descriptions.map((tpl) =>
+                    tpl.replace(/\{\{ADDRESS\}\}/g, address)
+                        .replace(/\{\{PRIOR_COMPLAINTS\}\}/g, formatPriorComplaints(workflow.priorComplaintIds))
+                );
+
+                const vehicleDescriptionInstructions = geofence
+                    ? 'leave description null. '
+                    : 'For description: pick whichever of these candidate descriptions is the closest factual match to '
+                        + 'the photo, then rewrite it so every claim in it is accurate to what the photo actually shows -- '
+                        + "correct or remove anything the photo doesn't support, and add any further factual detail visible "
+                        + 'in the photo that the authorities reviewing this report would need to understand the incident '
+                        + '(e.g. exactly where the vehicle sits relative to the bike lane, whether it looks occupied or '
+                        + 'running, what else is visibly blocked or obstructed). Judge only what is visibly true in the '
+                        + 'photo -- never comment on whether it looks legally parked or cite any rule or law. Candidates: '
+                        + JSON.stringify(candidateDescriptions) + '. If the photo is too blurry, dark, distant, or '
+                        + 'obstructed to confidently verify details against these candidates, set description to null '
+                        + '(an unedited candidate will be used as a fallback) instead of guessing. ';
+
                 const prompt = 'You are looking at a photo taken to report an issue affecting a bike lane in Detroit. '
                     + "Classify what's in the photo, then extract details. "
                     + 'Respond with ONLY a JSON object, no other text, in exactly this shape: '
@@ -1160,7 +1205,8 @@
                     + '"model": string|null, "color": string|null, "description": string|null, '
                     + '"suggest_sweep": boolean, "blu_category": "Construction"|"Other"|null}. '
                     + 'category "vehicle": a car/truck/van is blocking or parked in the bike lane -- fill plate/make/model/color '
-                    + '(null for anything not legible/determinable), leave description null, suggest_sweep false, blu_category null. '
+                    + '(null for anything not legible/determinable). ' + vehicleDescriptionInstructions
+                    + 'suggest_sweep false, blu_category null. '
                     + 'category "other": anything else affecting the bike lane -- broken glass, sand, gravel, a garbage/recycling '
                     + 'bin, construction materials or equipment, a pothole or sinkhole, other debris, snow, etc. Leave '
                     + 'plate/make/model/color null. Fill description with one concise, specific sentence describing exactly '
