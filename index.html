@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.13.0)</title>
+    <title>You Can't Park There (v3.14.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -37,7 +37,7 @@
          file -- bump it (matching APP_VERSION below) whenever config.js or
          this file changes, so a browser that loaded the page just before a
          deploy doesn't keep running stale config after a normal refresh. -->
-    <script src="config.js?v=3.13.0"></script>
+    <script src="config.js?v=3.14.0"></script>
     <!-- Firebase (compat build, so it works as a plain global like the rest
          of this no-build page) -- syncs submission history to Firestore. -->
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -117,6 +117,7 @@
     <div id="tabNav" class="flex gap-2 mt-4 mb-2">
         <button id="reportsTabBtn" class="flex-1 py-2 rounded-lg font-montserrat font-semibold text-sm transition bg-detroit-teal text-white shadow">Reports</button>
         <button id="offendersTabBtn" class="flex-1 py-2 rounded-lg font-montserrat font-semibold text-sm transition bg-white text-detroit-navy shadow-sm">Repeat Offenders</button>
+        <button id="statsTabBtn" class="flex-1 py-2 rounded-lg font-montserrat font-semibold text-sm transition bg-white text-detroit-navy shadow-sm">Stats</button>
     </div>
 
     <div id="reportsTab">
@@ -299,7 +300,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.13.0</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.14.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -348,18 +349,30 @@
         <div id="offendersList" class="flex flex-col gap-2"></div>
     </div>
 
+    <!-- Stats: Untappd-style personal stats (streaks, activity heatmap,
+         badges, leaderboard) -- see renderStats(). Purely derived from the
+         same historyCache the other tabs use. -->
+    <div id="statsTab" class="hidden">
+        <div class="flex gap-2 mb-4">
+            <button id="statsRangeMonthBtn" class="flex-1 py-1.5 rounded-lg text-xs font-semibold transition bg-white text-detroit-navy shadow-sm">This Month</button>
+            <button id="statsRangeYearBtn" class="flex-1 py-1.5 rounded-lg text-xs font-semibold transition bg-white text-detroit-navy shadow-sm">This Year</button>
+            <button id="statsRangeAllBtn" class="flex-1 py-1.5 rounded-lg text-xs font-semibold transition bg-detroit-teal text-white shadow">All Time</button>
+        </div>
+        <div id="statsContent" class="flex flex-col gap-3"></div>
+    </div>
+
     <!-- ON-SCREEN DEBUG CONSOLE: hidden by default, opened via the fly-in menu
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.13.0)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.14.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.13.0)...
+            App initialized (v3.14.0)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -371,7 +384,7 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.13.0';
+        const APP_VERSION = '3.14.0';
         const CONFIG = window.APP_CONFIG;
 
         // Firestore is the source of truth for submission history. Auth is
@@ -570,23 +583,52 @@
         const submitAllBtn = document.getElementById('submitAllBtn');
         const historyList = document.getElementById('historyList');
         const offendersList = document.getElementById('offendersList');
+        const statsContent = document.getElementById('statsContent');
 
-        // Tab nav: Reports vs Repeat Offenders
+        // Tab nav: Reports vs Repeat Offenders vs Stats
         const reportsTab = document.getElementById('reportsTab');
         const offendersTab = document.getElementById('offendersTab');
+        const statsTab = document.getElementById('statsTab');
         const reportsTabBtn = document.getElementById('reportsTabBtn');
         const offendersTabBtn = document.getElementById('offendersTabBtn');
+        const statsTabBtn = document.getElementById('statsTabBtn');
         const activeTabClasses = 'flex-1 py-2 rounded-lg font-montserrat font-semibold text-sm transition bg-detroit-teal text-white shadow';
         const inactiveTabClasses = 'flex-1 py-2 rounded-lg font-montserrat font-semibold text-sm transition bg-white text-detroit-navy shadow-sm';
+        const tabs = {
+            reports: { section: reportsTab, btn: reportsTabBtn },
+            offenders: { section: offendersTab, btn: offendersTabBtn },
+            stats: { section: statsTab, btn: statsTabBtn },
+        };
         function setActiveTab(tab) {
-            const showReports = tab === 'reports';
-            reportsTab.classList.toggle('hidden', !showReports);
-            offendersTab.classList.toggle('hidden', showReports);
-            reportsTabBtn.className = showReports ? activeTabClasses : inactiveTabClasses;
-            offendersTabBtn.className = showReports ? inactiveTabClasses : activeTabClasses;
+            for (const [key, { section, btn }] of Object.entries(tabs)) {
+                const active = key === tab;
+                section.classList.toggle('hidden', !active);
+                btn.className = active ? activeTabClasses : inactiveTabClasses;
+            }
+            if (tab === 'stats') renderStats();
         }
         reportsTabBtn.addEventListener('click', () => setActiveTab('reports'));
         offendersTabBtn.addEventListener('click', () => setActiveTab('offenders'));
+        statsTabBtn.addEventListener('click', () => setActiveTab('stats'));
+
+        // Stats time-range toggle (This Month / This Year / All Time) --
+        // see renderStats(). Streaks, the heatmap, the leaderboard, and
+        // badges stay all-time regardless (a streak spanning a month
+        // boundary shouldn't reset just because the view is scoped).
+        let statsRange = 'all';
+        const statsRangeBtns = { month: document.getElementById('statsRangeMonthBtn'), year: document.getElementById('statsRangeYearBtn'), all: document.getElementById('statsRangeAllBtn') };
+        const activeRangeClasses = 'flex-1 py-1.5 rounded-lg text-xs font-semibold transition bg-detroit-teal text-white shadow';
+        const inactiveRangeClasses = 'flex-1 py-1.5 rounded-lg text-xs font-semibold transition bg-white text-detroit-navy shadow-sm';
+        function setStatsRange(range) {
+            statsRange = range;
+            for (const [key, btn] of Object.entries(statsRangeBtns)) {
+                btn.className = key === range ? activeRangeClasses : inactiveRangeClasses;
+            }
+            renderStats();
+        }
+        statsRangeBtns.month.addEventListener('click', () => setStatsRange('month'));
+        statsRangeBtns.year.addEventListener('click', () => setStatsRange('year'));
+        statsRangeBtns.all.addEventListener('click', () => setStatsRange('all'));
 
         // Fly-in menu (left side) and the debug console it reveals
         const menuToggleBtn = document.getElementById('menuToggleBtn');
@@ -1818,6 +1860,7 @@
                 `).join('');
             }
             renderOffenders();
+            renderStats();
         }
 
         // Groups historyCache by normalized plate for the Repeat Offenders
@@ -1863,6 +1906,257 @@
                     </div>
                 </div>
             `).join('');
+        }
+
+        // ==========================================
+        // Stats tab (Untappd-style personal stats)
+        // ==========================================
+        // Everything below is derived from historyCache, same as
+        // Submission History and Repeat Offenders -- no separate Firestore
+        // query needed.
+
+        function isInStatsRange(entry, range) {
+            if (range === 'all') return true;
+            const d = new Date(entry.submittedAt);
+            const now = new Date();
+            if (range === 'month') return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+            return d.getFullYear() === now.getFullYear(); // 'year'
+        }
+
+        function dateKey(d) {
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        // Longest and current consecutive-day streaks, based on the local
+        // calendar day each report was submitted on. Always all-time -- a
+        // streak spanning a month/year boundary shouldn't reset just
+        // because the stats view is scoped to "This Month".
+        function computeStreaks(entries) {
+            const DAY_MS = 24 * 60 * 60 * 1000;
+            const days = [...new Set(entries.map((e) => dateKey(new Date(e.submittedAt))))]
+                .map((key) => {
+                    const [y, m, d] = key.split('-').map(Number);
+                    return new Date(y, m - 1, d).getTime();
+                })
+                .sort((a, b) => a - b);
+
+            if (days.length === 0) return { current: 0, longest: 0 };
+
+            let longest = 1;
+            let run = 1;
+            for (let i = 1; i < days.length; i++) {
+                run = days[i] - days[i - 1] === DAY_MS ? run + 1 : 1;
+                longest = Math.max(longest, run);
+            }
+
+            const today = new Date();
+            const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+            const lastDay = days[days.length - 1];
+            let current = 0;
+            if (todayStart - lastDay <= DAY_MS) { // last report was today or yesterday
+                current = 1;
+                for (let i = days.length - 1; i > 0; i--) {
+                    if (days[i] - days[i - 1] === DAY_MS) current++;
+                    else break;
+                }
+            }
+            return { current, longest };
+        }
+
+        const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+        function mostCommon(items) {
+            if (items.length === 0) return null;
+            const counts = new Map();
+            for (const item of items) counts.set(item, (counts.get(item) || 0) + 1);
+            return [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+        }
+
+        function formatHour(hour) {
+            const period = hour < 12 ? 'AM' : 'PM';
+            const h = hour % 12 === 0 ? 12 : hour % 12;
+            return `${h} ${period}`;
+        }
+
+        // Compact 12-week activity heatmap, GitHub-contribution-graph style
+        // -- always the last 84 days, independent of the range toggle.
+        function renderHeatmap(entries) {
+            const counts = new Map();
+            for (const entry of entries) {
+                const key = dateKey(new Date(entry.submittedAt));
+                counts.set(key, (counts.get(key) || 0) + 1);
+            }
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const start = new Date(today);
+            start.setDate(start.getDate() - 83 - today.getDay()); // back up to the Sunday 83+ days ago, so weeks align
+
+            const weeks = [];
+            const cursor = new Date(start);
+            while (cursor <= today) {
+                const week = [];
+                for (let i = 0; i < 7; i++) {
+                    const count = cursor > today ? null : (counts.get(dateKey(cursor)) || 0);
+                    week.push({ key: dateKey(cursor), count });
+                    cursor.setDate(cursor.getDate() + 1);
+                }
+                weeks.push(week);
+            }
+
+            const levelClass = (count) => {
+                if (count === null) return 'bg-transparent';
+                if (count === 0) return 'bg-slate-100';
+                if (count === 1) return 'bg-detroit-mint';
+                if (count <= 3) return 'bg-detroit-teal';
+                return 'bg-detroit-dark';
+            };
+
+            return `
+                <div class="flex gap-[3px] overflow-x-auto pb-1">
+                    ${weeks.map((week) => `
+                        <div class="flex flex-col gap-[3px]">
+                            ${week.map((day) => `<div class="w-[10px] h-[10px] rounded-sm ${levelClass(day.count)}" title="${day.count === null ? '' : `${day.count} report${day.count === 1 ? '' : 's'} on ${day.key}`}"></div>`).join('')}
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function renderStats() {
+            if (!statsContent) return;
+
+            if (historyCache.length === 0) {
+                statsContent.innerHTML = '<p class="text-xs text-slate-400 px-1">No reports logged yet -- your stats will show up here once you submit your first one.</p>';
+                return;
+            }
+
+            const inRange = historyCache.filter((e) => isInStatsRange(e, statsRange));
+            const rangeLabel = statsRange === 'month' ? 'this month' : statsRange === 'year' ? 'this year' : 'all time';
+
+            const totalInRange = inRange.length;
+            const uniquePlatesInRange = new Set(inRange.map((e) => normalizePlate(e.plate)).filter(Boolean)).size;
+
+            // Repeat offenders caught in range: plates in range that have
+            // more than one incident total (all-time), i.e. were already
+            // known repeats by the time this range's reports came in.
+            const allTimeCounts = new Map();
+            for (const entry of historyCache) {
+                const normalized = normalizePlate(entry.plate);
+                if (!normalized) continue;
+                allTimeCounts.set(normalized, (allTimeCounts.get(normalized) || 0) + 1);
+            }
+            const repeatOffendersInRange = new Set(
+                inRange.map((e) => normalizePlate(e.plate)).filter((p) => p && allTimeCounts.get(p) > 1)
+            ).size;
+
+            const { current: currentStreak, longest: longestStreak } = computeStreaks(historyCache);
+
+            const busiestStreet = mostCommon(inRange.map((e) => e.address).filter(Boolean));
+            const busiestDay = mostCommon(inRange.map((e) => new Date(e.submittedAt).getDay()));
+            const busiestHour = mostCommon(inRange.map((e) => new Date(e.photoTakenAt || e.submittedAt).getHours()));
+
+            // Repeat offender leaderboard -- always all-time, a hall of fame.
+            const leaderboard = [...allTimeCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+            const firstReport = historyCache.slice().sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt))[0];
+
+            const totalAllTime = historyCache.length;
+            const maxPlateCount = leaderboard.length > 0 ? leaderboard[0][1] : 0;
+            const hasNightOwl = historyCache.some((e) => {
+                const h = new Date(e.photoTakenAt || e.submittedAt).getHours();
+                return h >= 22 || h < 5;
+            });
+            const hasEarlyBird = historyCache.some((e) => new Date(e.photoTakenAt || e.submittedAt).getHours() < 7);
+
+            const badges = [
+                { icon: '🎯', name: 'First Blood', desc: 'Log your first report', earned: totalAllTime >= 1, progress: `${Math.min(totalAllTime, 1)}/1` },
+                { icon: '📸', name: 'Getting Started', desc: 'Log 10 reports', earned: totalAllTime >= 10, progress: `${Math.min(totalAllTime, 10)}/10` },
+                { icon: '🚴', name: 'Prolific Reporter', desc: 'Log 50 reports', earned: totalAllTime >= 50, progress: `${Math.min(totalAllTime, 50)}/50` },
+                { icon: '🏆', name: 'Century Club', desc: 'Log 100 reports', earned: totalAllTime >= 100, progress: `${Math.min(totalAllTime, 100)}/100` },
+                { icon: '🔥', name: 'On a Roll', desc: '7-day reporting streak', earned: longestStreak >= 7, progress: `${Math.min(longestStreak, 7)}/7` },
+                { icon: '⚡', name: 'Unstoppable', desc: '30-day reporting streak', earned: longestStreak >= 30, progress: `${Math.min(longestStreak, 30)}/30` },
+                { icon: '🕵️', name: 'Repeat Buster', desc: 'Catch the same plate twice', earned: maxPlateCount >= 2, progress: `${Math.min(maxPlateCount, 2)}/2` },
+                { icon: '😈', name: 'Nemesis', desc: 'Catch the same plate 5 times', earned: maxPlateCount >= 5, progress: `${Math.min(maxPlateCount, 5)}/5` },
+                { icon: '🦉', name: 'Night Owl', desc: 'Report a vehicle spotted 10pm-5am', earned: hasNightOwl },
+                { icon: '🐦', name: 'Early Bird', desc: 'Report a vehicle spotted before 7am', earned: hasEarlyBird },
+            ];
+            const earnedCount = badges.filter((b) => b.earned).length;
+
+            statsContent.innerHTML = `
+                <div class="grid grid-cols-3 gap-2">
+                    <div class="bg-white rounded-lg shadow-sm p-3 text-center">
+                        <p class="text-2xl font-montserrat font-extrabold text-detroit-dark">${totalInRange}</p>
+                        <p class="text-[10px] uppercase text-slate-500 font-semibold">Reports ${escapeHtml(rangeLabel)}</p>
+                    </div>
+                    <div class="bg-white rounded-lg shadow-sm p-3 text-center">
+                        <p class="text-2xl font-montserrat font-extrabold text-detroit-dark">${uniquePlatesInRange}</p>
+                        <p class="text-[10px] uppercase text-slate-500 font-semibold">Unique Plates</p>
+                    </div>
+                    <div class="bg-white rounded-lg shadow-sm p-3 text-center">
+                        <p class="text-2xl font-montserrat font-extrabold text-detroit-dark">${repeatOffendersInRange}</p>
+                        <p class="text-[10px] uppercase text-slate-500 font-semibold">Repeats Caught</p>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-lg shadow-sm p-3">
+                    <p class="text-lg font-montserrat font-bold text-detroit-dark">🔥 ${currentStreak}-day streak</p>
+                    <p class="text-[10px] text-slate-500">Longest streak: ${longestStreak} day${longestStreak === 1 ? '' : 's'}</p>
+                </div>
+
+                <div class="bg-white rounded-lg shadow-sm p-3">
+                    <p class="text-[10px] font-bold text-detroit-navy uppercase mb-2">Last 12 Weeks</p>
+                    ${renderHeatmap(historyCache)}
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="bg-white rounded-lg shadow-sm p-3">
+                        <p class="text-[10px] font-bold text-detroit-navy uppercase mb-1">Busiest Street</p>
+                        <p class="text-sm font-semibold text-detroit-dark truncate">${busiestStreet ? escapeHtml(busiestStreet[0]) : '--'}</p>
+                        <p class="text-[10px] text-slate-400">${busiestStreet ? `${busiestStreet[1]} report${busiestStreet[1] === 1 ? '' : 's'}` : `No reports ${escapeHtml(rangeLabel)}`}</p>
+                    </div>
+                    <div class="bg-white rounded-lg shadow-sm p-3">
+                        <p class="text-[10px] font-bold text-detroit-navy uppercase mb-1">Peak Time</p>
+                        <p class="text-sm font-semibold text-detroit-dark">${busiestDay ? DAY_NAMES[busiestDay[0]] : '--'}${busiestHour ? `, ${formatHour(busiestHour[0])}` : ''}</p>
+                        <p class="text-[10px] text-slate-400">${busiestDay ? `${busiestDay[1]} report${busiestDay[1] === 1 ? '' : 's'}` : `No reports ${escapeHtml(rangeLabel)}`}</p>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-lg shadow-sm p-3">
+                    <p class="text-[10px] font-bold text-detroit-navy uppercase mb-2">Repeat Offender Leaderboard</p>
+                    ${leaderboard.length === 0 ? '<p class="text-xs text-slate-400">No repeat offenders yet.</p>' : `
+                        <div class="flex flex-col gap-1">
+                            ${leaderboard.map(([plate, count], idx) => `
+                                <div class="flex justify-between items-center text-sm">
+                                    <span class="font-mono text-detroit-dark">${['🥇', '🥈', '🥉'][idx] || `#${idx + 1}`} ${escapeHtml(plate)}</span>
+                                    <span class="text-[10px] font-bold text-slate-500">${count} incident${count === 1 ? '' : 's'}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `}
+                </div>
+
+                ${firstReport ? `
+                    <div class="bg-white rounded-lg shadow-sm p-3">
+                        <p class="text-[10px] font-bold text-detroit-navy uppercase mb-1">First Ever Report</p>
+                        <p class="text-sm text-detroit-dark">${escapeHtml(firstReport.address)} &middot; ${new Date(firstReport.submittedAt).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })}</p>
+                    </div>
+                ` : ''}
+
+                <div class="bg-white rounded-lg shadow-sm p-3">
+                    <p class="text-[10px] font-bold text-detroit-navy uppercase mb-2">Badges (${earnedCount}/${badges.length})</p>
+                    <div class="grid grid-cols-2 gap-2">
+                        ${badges.map((b) => `
+                            <div class="flex items-center gap-2 p-2 rounded-lg ${b.earned ? 'bg-detroit-mint/30' : 'bg-slate-50'}">
+                                <span class="text-xl ${b.earned ? '' : 'opacity-30 grayscale'}">${b.icon}</span>
+                                <div class="min-w-0">
+                                    <p class="text-xs font-semibold truncate ${b.earned ? 'text-detroit-dark' : 'text-slate-400'}">${escapeHtml(b.name)}</p>
+                                    <p class="text-[9px] text-slate-400 truncate">${b.earned ? escapeHtml(b.desc) : escapeHtml(b.progress || b.desc)}</p>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
         }
 
         async function refreshHistoryStatus(idx) {
