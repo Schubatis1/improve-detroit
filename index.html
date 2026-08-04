@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.16.0)</title>
+    <title>You Can't Park There (v3.14.1)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -37,7 +37,7 @@
          file -- bump it (matching APP_VERSION below) whenever config.js or
          this file changes, so a browser that loaded the page just before a
          deploy doesn't keep running stale config after a normal refresh. -->
-    <script src="config.js?v=3.16.0"></script>
+    <script src="config.js?v=3.14.1"></script>
     <!-- Firebase (compat build, so it works as a plain global like the rest
          of this no-build page) -- syncs submission history to Firestore. -->
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -79,6 +79,16 @@
         </div>
         <button id="geofenceMenuBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Geofence Maintenance
+        </button>
+        <!-- One-time scaffolding for mobile use (no console access to run
+             `npm run seed-geofences` from a phone) -- writes the same
+             starting geofences as scripts/seed-geofences.js, but through
+             the already-signed-in client SDK instead of firebase-admin.
+             Per v3.14.1's request: disable/remove this in the next release
+             once the starting geofences have been seeded. See
+             seedStartingGeofences()/SEED_GEOFENCES below. -->
+        <button id="seedGeofencesBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
+            Seed Starting Geofences
         </button>
         <button id="releaseNotesMenuBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Release Notes
@@ -421,7 +431,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.16.0</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.14.1</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -486,14 +496,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.16.0)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.14.1)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.16.0)...
+            App initialized (v3.14.1)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -505,13 +515,18 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.16.0';
+        const APP_VERSION = '3.14.1';
         const CONFIG = window.APP_CONFIG;
 
-        // Shown on the Release Notes screen (hamburger menu). Newest first.
+        // Shown on the Release Notes screen (hamburger menu). Newest first
+        // by ship date, not necessarily by version-number sort order (see
+        // v3.14.1 below, requested out of the normal sequence).
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.14.1', date: '2026-08-04', notes: [
+                'Added a "Seed Starting Geofences" button to the hamburger menu, so the starting geofence set can be created from a phone without console/npm access. One-time scaffolding -- planned for removal in the next release.',
+            ] },
             { version: '3.16.0', date: '2026-08-04', notes: [
                 'Added a "Suppress Municipal Malparkage Report" toggle per submission -- skips reporting to the City of Detroit while still mirroring to Bike Lane Uprising and updating history, streaks, and plate counts.',
                 'Geofences are now time-bound (days of week + hours), not just location-bound -- e.g. the GAR Building/Sexy Steak geofence is now only active after 2pm.',
@@ -565,6 +580,78 @@
             return defaultOption + CONFIG.bluCategories.map((c) =>
                 `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`
             ).join('');
+        }
+
+        // Backs the "Seed Starting Geofences" menu button -- must stay
+        // logically identical to scripts/seed-geofences.js's GEOFENCES
+        // (duplicated rather than shared since that one runs under Node
+        // with firebase-admin, not in the browser). One-time scaffolding
+        // for seeding from a phone with no console access -- see the HTML
+        // comment above the button and seedStartingGeofences() below for
+        // the plan to remove this in the release after v3.14.1.
+        const SEED_GEOFENCES = [
+            {
+                id: 'gar-building',
+                name: 'GAR Building valet staging (Sexy Steak)',
+                lat: 42.33494474658147,
+                lng: -83.05480479874544,
+                radiusMeters: 100,
+                message: 'Valet operator at the GAR Building (Sexy Steak, 1942 Grand River) is using the Grand River bicycle lane as a staging area, blocking the bike lane. This is a recurring problem -- see previous {{PRIOR_COMPLAINTS}}.',
+                bluCategory: 'Company Vehicle',
+                improveDetroitCategory: '',
+                daysOfWeek: [],
+                startHour: 14,
+                endHour: null,
+                detectRepeatOffenders: true,
+                reportRepeatOffenders: true,
+                detectRepeatIncidents: true,
+                reportRepeatIncidents: true,
+            },
+            {
+                id: 'times-square',
+                name: 'Times Square (Cass & Times Square)',
+                lat: 42.33273028080044,
+                lng: -83.05313484015257,
+                radiusMeters: 35,
+                message: 'Vehicle parked across bicycle lane and hatched road marking at corner of Cass and Times Square. Please note this is a recurring incident. Please see previous {{PRIOR_COMPLAINTS}}.',
+                bluCategory: 'Private Owner Vehicle',
+                improveDetroitCategory: '',
+                daysOfWeek: [],
+                startHour: null,
+                endHour: null,
+                detectRepeatOffenders: true,
+                reportRepeatOffenders: true,
+                detectRepeatIncidents: true,
+                reportRepeatIncidents: true,
+            },
+        ];
+
+        // Writes/updates (merge: true, so it never clobbers edits made
+        // since from the Geofence Maintenance screen) each of
+        // SEED_GEOFENCES into users/{uid}/geofences via the already
+        // signed-in client SDK -- the mobile-friendly equivalent of running
+        // `npm run seed-geofences` from a console.
+        async function seedStartingGeofences() {
+            const names = SEED_GEOFENCES.map((g) => g.name).join(', ');
+            if (!confirm(`Create/update the starting geofences (${names}) in your account? Any other geofences you've added are left alone.`)) return;
+
+            const btn = document.getElementById('seedGeofencesBtn');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Seeding...';
+            try {
+                const uid = currentUid || await historySignedIn;
+                for (const { id, ...data } of SEED_GEOFENCES) {
+                    await geofencesCollection(uid).doc(id).set(data, { merge: true });
+                    logToConsole(`Seeded geofence "${id}" (${data.name}).`);
+                }
+                btn.textContent = 'Seeded ✓';
+            } catch (err) {
+                btn.textContent = 'Seed failed';
+                logToConsole(`Could not seed geofences: ${err instanceof Error ? err.message : err}`, true);
+            }
+            btn.disabled = false;
+            setTimeout(() => { btn.textContent = originalText; }, 2500);
         }
 
         // Firestore is the source of truth for submission history. Auth is
@@ -921,6 +1008,10 @@
             geofenceScreen.classList.remove('hidden');
         });
         geofenceCloseBtn.addEventListener('click', () => geofenceScreen.classList.add('hidden'));
+        document.getElementById('seedGeofencesBtn').addEventListener('click', () => {
+            closeMenu();
+            seedStartingGeofences();
+        });
         document.getElementById('geofenceAddBtn').addEventListener('click', () => showGeofenceForm(null));
         document.getElementById('geofenceFormCloseBtn').addEventListener('click', showGeofenceList);
         document.getElementById('gfAllHours').addEventListener('change', (e) => {
