@@ -2,10 +2,12 @@
  * You Can't Park There -- configuration
  *
  * Everything site-specific and likely to change lives here: API keys/IDs,
- * geofences, and the message pools each workflow pulls from. index.html
- * only contains app logic that reads this file -- adding a geofence, a
- * plate rule, or new message wording should never require touching
- * index.html.
+ * plate rules, and the message pools each workflow pulls from. index.html
+ * only contains app logic that reads this file -- adding a plate rule or
+ * new message wording should never require touching index.html.
+ * (Geofences used to live here too, but are now fully managed from the
+ * app's Geofence Maintenance screen and stored in Firestore -- see the
+ * comment further down.)
  *
  * Loaded as a plain global (window.APP_CONFIG) so it still works from a
  * file:// page with no build step. Reload the page after editing.
@@ -73,39 +75,33 @@ window.APP_CONFIG = {
         ],
     },
 
-    // Any photo taken within `radiusMeters` of (lat, lng) uses `workflow`
-    // instead of defaultWorkflow. Fields a geofence's workflow leaves out
-    // (e.g. `summary`) fall back to defaultWorkflow's value. Add more
-    // entries here for additional locations -- no code changes needed. The
-    // first matching geofence wins if more than one overlaps.
-    geofences: [
-        {
-            // Sexy Steak's valet at the GAR Building, 1942 Grand River.
-            id: 'gar-building',
-            name: 'GAR Building valet staging',
-            lat: 42.33494474658147,
-            lng: -83.05480479874544,
-            radiusMeters: 100,
-            workflow: {
-                descriptions: [
-                    'Valet operator at the GAR Building (Sexy Steak, 1942 Grand River) is using the Grand River bicycle lane as a staging area, blocking the bike lane. This is a recurring problem -- see previous {{PRIOR_COMPLAINTS}}.',
-                ],
-                // Bike Lane Uprising's "Obstruction Type" category for this
-                // report -- must exactly match one of the option labels on
-                // bikelaneuprising.com/submit (see scripts/submit-to-blu.js).
-                // Falls back to "Private Owner Vehicle" for any workflow
-                // that doesn't set this (defaultWorkflow included).
-                bluCategory: 'Company Vehicle',
-                // priorComplaintIds is NOT set here -- it's computed at
-                // runtime in index.html from every synced history entry
-                // whose geofenceId matches this geofence's id ('gar-building'),
-                // so the citation list grows automatically as reports are
-                // submitted from any device, with no config/code change
-                // needed. See getPriorComplaintIdsForGeofence() and
-                // scripts/tag-geofence.js (for backfilling old reports that
-                // predate this app version and so were never auto-tagged).
-            },
-        },
+    // Geofences used to live here as a static array, but that meant every
+    // add/edit/delete required a code change + redeploy. They now live in
+    // Firestore (users/{uid}/geofences), managed from the app itself via
+    // the Geofence Maintenance screen (hamburger menu) -- see index.html's
+    // initGeofencesSync/resolveWorkflow/geofenceActiveAt. Each geofence
+    // document holds: name, lat, lng, radiusMeters, message (supports
+    // {{ADDRESS}} and {{PRIOR_COMPLAINTS}} placeholders, same as before),
+    // bluCategory, improveDetroitCategory, daysOfWeek, startHour/endHour
+    // (time-of-day bounds, both null = 24/7), and
+    // detect/reportRepeatOffenders + detect/reportRepeatIncidents booleans.
+    // The first matching *and currently active* geofence wins if more than
+    // one overlaps. Run scripts/seed-geofences.js once against a fresh
+    // Firestore project to create the starting set (GAR Building valet
+    // staging + the Times Square geofence).
+
+    // Bike Lane Uprising's "Obstruction Type" options, copied verbatim from
+    // bikelaneuprising.com/submit (see scripts/submit-to-blu.js, which
+    // selects by this exact label text). Shared by the per-report BLU
+    // Category field and the Geofence Maintenance form so both stay in
+    // sync with one edit.
+    bluCategories: [
+        'Private Owner Vehicle',
+        'Company Vehicle',
+        'Construction',
+        'Municipal (city) Vehicle - includes USPS',
+        'Taxi / Uber / Livery / Lyft',
+        'Other  (damaged lane / snow / debris / pedestrian / etc.)',
     ],
 
     // Checked once a plate is OCR'd from the photo. Each rule's `plates`
