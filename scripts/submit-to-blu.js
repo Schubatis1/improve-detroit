@@ -324,7 +324,13 @@ async function main() {
             const tempPhotoPath = path.join(os.tmpdir(), `blu-${issueId}.jpg`);
             try {
                 await downloadToTempFile(entry.photoUrl, tempPhotoPath);
-                const notes = `Incident reported to the City of Detroit as #${issueId}. https://seeclickfix.com/issues/${issueId}`;
+                // "Suppress Municipal Malparkage Report" entries were never
+                // sent to SeeClickFix, so issueId here is a synthetic local
+                // id (see index.html's submitItem), not a real Detroit
+                // ticket -- don't claim one exists.
+                const notes = entry.suppressed
+                    ? 'Recurring/known incident -- not reported to the City of Detroit for this occurrence.'
+                    : `Incident reported to the City of Detroit as #${issueId}. https://seeclickfix.com/issues/${issueId}`;
                 await fillSubmitForm(page, entry, tempPhotoPath, notes);
 
                 if (args.dryRun) {

@@ -4,7 +4,8 @@
   "scripts": {
     "import-history": "node scripts/import-seeclickfix-history.js",
     "submit-to-blu": "node scripts/submit-to-blu.js",
-    "backfill-plates": "node scripts/backfill-plates.js"
+    "backfill-plates": "node scripts/backfill-plates.js",
+    "seed-geofences": "node scripts/seed-geofences.js"
   },
   "dependencies": {
     "firebase-admin": "^12.6.0",
