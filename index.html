@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.15.1)</title>
+    <title>You Can't Park There (v3.15.2)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -37,7 +37,7 @@
          file -- bump it (matching APP_VERSION below) whenever config.js or
          this file changes, so a browser that loaded the page just before a
          deploy doesn't keep running stale config after a normal refresh. -->
-    <script src="config.js?v=3.15.1"></script>
+    <script src="config.js?v=3.15.2"></script>
     <!-- Firebase (compat build, so it works as a plain global like the rest
          of this no-build page) -- syncs submission history to Firestore. -->
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -300,7 +300,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.15.1</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.15.2</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -365,14 +365,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.15.1)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.15.2)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.15.1)...
+            App initialized (v3.15.2)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -384,7 +384,7 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.15.1';
+        const APP_VERSION = '3.15.2';
         const CONFIG = window.APP_CONFIG;
 
         // Firestore is the source of truth for submission history. Auth is
@@ -482,12 +482,22 @@
             });
         });
 
-        document.getElementById('googleSignInBtn').addEventListener('click', async () => {
+        document.getElementById('googleSignInBtn').addEventListener('click', async (e) => {
+            const btn = e.currentTarget;
+            // Without this, a double-click (or an impatient second click
+            // while the Google popup is still loading) fires signInWithPopup
+            // twice before the first resolves -- Firebase then cancels the
+            // first with "auth/cancelled-popup-request" and sign-in fails
+            // even though nothing was actually wrong.
+            if (btn.disabled) return;
+            btn.disabled = true;
             signInStatus.textContent = '';
             try {
                 await firebaseAuth.signInWithPopup(googleProvider);
             } catch (err) {
                 signInStatus.textContent = `Sign-in failed: ${err instanceof Error ? err.message : err}`;
+            } finally {
+                btn.disabled = false;
             }
         });
 
