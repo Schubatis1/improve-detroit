@@ -1336,6 +1336,16 @@
         // further down) before it ever executes.
         const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+        // Same reasoning as parkingDeptLettersCache/DAY_NAMES above: declared
+        // here rather than down with the rest of the Geofence Maintenance
+        // code because renderHistory() -> refreshOpenGeofenceIncidents()
+        // reads it, and renderHistory() runs unconditionally near the top of
+        // this script on every page load -- a `let` declared later would
+        // still be in its temporal dead zone at that point and throw,
+        // breaking the entire app on load (initHistorySync/initPlatesSync/
+        // initGeofencesSync right below never even get called).
+        let editingGeofenceId = null;
+
         logToConsole(`Running version ${APP_VERSION}`);
         renderHistory();
         initHistorySync();
@@ -2598,8 +2608,9 @@
         // Full CRUD against Firestore (users/{uid}/geofences) -- see
         // initGeofencesSync/geofencesCache above for the read side, and
         // resolveWorkflow/geofenceActiveAt for how a saved geofence is
-        // applied to a report.
-        let editingGeofenceId = null;
+        // applied to a report. editingGeofenceId itself is declared earlier
+        // in the script, alongside parkingDeptLettersCache/DAY_NAMES -- see
+        // the comment there.
         let cachedNatureValuesForForm = null;
 
         // Geofence map picker: draggable Leaflet/OSM marker + a live radius
