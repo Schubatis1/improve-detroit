@@ -328,9 +328,15 @@ async function main() {
                 // sent to SeeClickFix, so issueId here is a synthetic local
                 // id (see index.html's submitItem), not a real Detroit
                 // ticket -- don't claim one exists.
-                const notes = entry.suppressed
+                const ticketNote = entry.suppressed
                     ? 'Recurring/known incident -- not reported to the City of Detroit for this occurrence.'
                     : `Incident reported to the City of Detroit as #${issueId}. https://seeclickfix.com/issues/${issueId}`;
+                // entry.description is the (user-editable, up until this
+                // script processes it -- see index.html's history fly-in)
+                // incident description; older entries written before that
+                // field existed have none, so notes falls back to exactly
+                // what this script always sent.
+                const notes = entry.description ? `${entry.description} ${ticketNote}` : ticketNote;
                 await fillSubmitForm(page, entry, tempPhotoPath, notes);
 
                 if (args.dryRun) {

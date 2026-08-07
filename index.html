@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.16.1)</title>
+    <title>You Can't Park There (v3.17.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -37,7 +37,7 @@
          file -- bump it (matching APP_VERSION below) whenever config.js or
          this file changes, so a browser that loaded the page just before a
          deploy doesn't keep running stale config after a normal refresh. -->
-    <script src="config.js?v=3.16.1"></script>
+    <script src="config.js?v=3.17.0"></script>
     <!-- Firebase (compat build, so it works as a plain global like the rest
          of this no-build page) -- syncs submission history to Firestore. -->
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -144,6 +144,11 @@
                     <input type="number" step="any" min="1" id="gfRadius" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
                 </div>
                 <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Map</label>
+                    <div id="gfMapWrap" class="rounded-lg overflow-hidden border border-detroit-mint mt-1" style="height:200px"></div>
+                    <p class="text-[10px] text-slate-400 font-mono mt-1" id="gfMapCoords">--</p>
+                </div>
+                <div>
                     <label class="text-xs font-bold text-detroit-navy uppercase">Message</label>
                     <textarea id="gfMessage" rows="4" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1"></textarea>
                     <p class="text-[10px] text-slate-400 mt-1">Use <code>{{ADDRESS}}</code> for the resolved street address and <code>{{PRIOR_COMPLAINTS}}</code> to cite prior reports at this geofence (only filled in when "Report Repeat Incidents" is on below).</p>
@@ -196,6 +201,17 @@
                     <p class="text-[10px] text-slate-400">"Detect" looks up prior incidents/offenders for this geofence; "Report" includes what's found in the outgoing message. Report automatically turns Detect on.</p>
                 </div>
 
+                <!-- Read-only list of every submission history entry tagged with
+                     this geofence's id -- see renderGeofenceIncidents(), sourced
+                     from the same historyCache renderHistory() uses. Only shown
+                     when editing an existing geofence (a new, unsaved one has no
+                     id for entries to match against). Editing a report itself
+                     happens from its own fly-in (openHistoryFlyIn), not here. -->
+                <div id="gfIncidentsSection" class="hidden">
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Incidents At This Geofence</label>
+                    <div id="gfIncidentsList" class="flex flex-col gap-2 mt-1"></div>
+                </div>
+
                 <button id="gfSaveBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition mt-2">
                     Save Geofence
                 </button>
@@ -205,6 +221,19 @@
                 <p id="gfFormMsg" class="text-center text-xs font-medium"></p>
             </div>
         </div>
+    </div>
+
+    <!-- Report fly-in: full-screen editor opened by tapping a compact queue
+         or history summary card (see mountItemCard/openQueueItemFlyIn for
+         queue cards, renderHistory/openHistoryFlyIn for submitted reports).
+         One shared shell -- only one report is ever being edited at a time.
+         Same overlay pattern as #geofenceScreen/#releaseNotesScreen. -->
+    <div id="itemFlyInScreen" class="hidden fixed inset-0 bg-[#eef7f5] z-[55] flex flex-col p-4 overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h2 id="itemFlyInTitle" class="text-lg font-montserrat font-extrabold text-detroit-dark truncate pr-2">Report</h2>
+            <button id="itemFlyInCloseBtn" aria-label="Close" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark flex-shrink-0">&times;</button>
+        </div>
+        <div id="itemFlyInBody" class="flex flex-col gap-3 pb-8"></div>
     </div>
 
     <!-- Release Notes: read-only, rendered from the RELEASE_NOTES const below. -->
@@ -431,7 +460,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.16.1</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.17.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -496,14 +525,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.16.1)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.17.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.16.1)...
+            App initialized (v3.17.0)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -515,13 +544,20 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.16.1';
+        const APP_VERSION = '3.17.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.17.0', date: '2026-08-07', notes: [
+                'Geofence Maintenance now has a draggable map pin with a live radius circle, synced with the lat/lng/distance fields.',
+                'Geofence Maintenance now lists every incident logged at that geofence.',
+                'Submitted reports can now be edited (description, BLU category, address, plate, map pin) up until Bike Lane Uprising has processed them -- locked automatically once bluStatus leaves "pending".',
+                'Queue and submitted-report cards are now compact summaries on the main screen; tap one to open a full-screen editor with every field.',
+                'Release Notes now pop up automatically the first time you load the app after an update, instead of only from the hamburger menu.',
+            ] },
             { version: '3.16.1', date: '2026-08-04', notes: [
                 'Added a "Seed Starting Geofences" button to the hamburger menu, so the starting geofence set can be created from a phone without console/npm access. One-time scaffolding -- planned for removal in the next release.',
             ] },
@@ -733,6 +769,7 @@
                 appContent.classList.remove('hidden');
                 currentUid = user.uid;
                 resolveHistorySignedIn(user.uid);
+                checkReleaseNotesAutoPopup(user.uid);
                 firestoreDb.collection('config').doc('secrets').get()
                     .then((doc) => {
                         CONFIG.geminiApiKey = doc.exists ? doc.data().geminiApiKey : null;
@@ -1051,6 +1088,36 @@
             `).join('');
         }
 
+        // Auto-popup on version bump (#5): the first time a signed-in user
+        // loads the app after APP_VERSION has changed since their last
+        // visit, show Release Notes automatically instead of requiring the
+        // hamburger menu. "Last seen version" lives in Firestore
+        // (users/{uid}.lastSeenVersion, not just localStorage) so it
+        // follows the account across devices/sessions, same as history.
+        // Written as soon as we decide whether to show the popup, so a
+        // reload never shows it twice for the same version bump. A missing
+        // field (brand-new user, nothing to compare against yet) never
+        // triggers the popup -- it just seeds the field for next time.
+        function userDocRef(uid) {
+            return firestoreDb.collection('users').doc(uid);
+        }
+
+        async function checkReleaseNotesAutoPopup(uid) {
+            try {
+                const snap = await userDocRef(uid).get();
+                const lastSeenVersion = snap.exists ? snap.data().lastSeenVersion : null;
+                if (lastSeenVersion && lastSeenVersion !== APP_VERSION) {
+                    renderReleaseNotes();
+                    releaseNotesScreen.classList.remove('hidden');
+                }
+                if (lastSeenVersion !== APP_VERSION) {
+                    await userDocRef(uid).set({ lastSeenVersion: APP_VERSION }, { merge: true });
+                }
+            } catch (err) {
+                logToConsole(`Could not check/update last-seen release notes version: ${err instanceof Error ? err.message : err}`, true);
+            }
+        }
+
         const debugCopyBtn = document.getElementById('debugCopyBtn');
         const debugLog = document.getElementById('debugLog');
         debugCopyBtn.addEventListener('click', async () => {
@@ -1080,6 +1147,53 @@
         photoLightbox.addEventListener('click', (e) => {
             if (e.target === photoLightbox) closeLightbox();
         });
+
+        // ==========================================
+        // Report fly-in (shared full-screen editor)
+        // ==========================================
+        // One overlay shell, reused for both queue-item editing (a detached
+        // detail panel built once by mountItemCard and reparented in/out --
+        // see openQueueItemFlyIn) and history/BLU editing (rebuilt from
+        // scratch on every open from the current historyCache entry -- see
+        // openHistoryFlyIn). Only one item is ever being edited at a time,
+        // same as every other full-screen overlay in this app
+        // (#geofenceScreen, #releaseNotesScreen).
+        const itemFlyInScreen = document.getElementById('itemFlyInScreen');
+        const itemFlyInTitle = document.getElementById('itemFlyInTitle');
+        const itemFlyInBody = document.getElementById('itemFlyInBody');
+        const itemFlyInCloseBtn = document.getElementById('itemFlyInCloseBtn');
+        let currentFlyInItem = null; // the queue item object, while a queue card's fly-in is open
+        let currentFlyInKind = null; // 'queue' | 'history' | null
+        let historyFlyInMap = null;
+        let historyFlyInMarker = null;
+
+        function closeItemFlyIn() {
+            itemFlyInScreen.classList.add('hidden');
+            if (historyFlyInMap) { historyFlyInMap.remove(); historyFlyInMap = null; }
+            historyFlyInMarker = null;
+            itemFlyInBody.innerHTML = '';
+            currentFlyInItem = null;
+            currentFlyInKind = null;
+        }
+        itemFlyInCloseBtn.addEventListener('click', closeItemFlyIn);
+
+        // Opens a queue item's full editable field set (built once by
+        // mountItemCard as item.detailWrapper) inside the shared fly-in.
+        // Reparenting the same DOM node preserves every element reference in
+        // item.els and every listener already wired to it -- nothing about
+        // how those fields are read/written elsewhere in this file changes.
+        function openQueueItemFlyIn(item) {
+            if (!item.fieldsReady) return; // still processing/failed -- nothing to show yet
+            itemFlyInTitle.textContent = item.file ? item.file.name : 'Report';
+            itemFlyInBody.innerHTML = '';
+            itemFlyInBody.appendChild(item.detailWrapper);
+            itemFlyInScreen.classList.remove('hidden');
+            currentFlyInItem = item;
+            currentFlyInKind = 'queue';
+            // The map container had zero size while detached/hidden -- fix
+            // its tile grid up now that it's actually visible.
+            setTimeout(() => { if (item.map) item.map.invalidateSize(); }, 50);
+        }
 
         let queue = [];
         let itemCounter = 0;
@@ -1260,120 +1374,132 @@
                 : 'Submit to Improve Detroit';
         }
 
+        // Builds a compact summary card (thumbnail, filename/title, one-line
+        // status -- appended straight to queueContainer) plus a detached
+        // "detail" panel holding the full editable field set. The detail
+        // panel isn't inserted into the document until the summary card is
+        // tapped and it's moved into the shared report fly-in (see
+        // openQueueItemFlyIn) -- everything below that still queries/writes
+        // item.els exactly as before; only *where* those elements live in
+        // the document changes.
         function mountItemCard(item, labelText, previewUrl) {
-            const wrapper = document.createElement('div');
-            wrapper.className = 'bg-white rounded-xl shadow-md p-4 mb-4 flex flex-col gap-3';
-            wrapper.dataset.itemId = item.id;
-            wrapper.innerHTML = `
-                <div class="flex gap-3 items-start">
-                    <img data-role="thumbnail" src="${previewUrl}" class="w-20 h-20 object-cover rounded-lg shadow-sm flex-shrink-0 cursor-zoom-in" alt="Selected photo -- tap to view full-size">
-                    <div class="flex-1 min-w-0">
-                        <p class="text-xs text-slate-400 truncate">${escapeHtml(labelText)}</p>
-                        <p class="text-xs font-bold uppercase mt-1 text-detroit-teal" data-role="statusBadge">Extracting metadata...</p>
-                    </div>
+            const card = document.createElement('div');
+            card.className = 'bg-white rounded-xl shadow-md p-3 mb-3 flex gap-3 items-center cursor-pointer hover:shadow-lg transition';
+            card.dataset.itemId = item.id;
+            card.innerHTML = `
+                <img data-role="thumbnail" src="${previewUrl}" class="w-16 h-16 object-cover rounded-lg shadow-sm flex-shrink-0 cursor-zoom-in" alt="Selected photo -- tap to view full-size">
+                <div class="flex-1 min-w-0">
+                    <p class="text-xs text-slate-400 truncate">${escapeHtml(labelText)}</p>
+                    <p class="text-xs font-bold uppercase mt-1 text-detroit-teal truncate" data-role="statusBadge">Extracting metadata...</p>
                 </div>
-
-                <div data-role="fields" class="hidden flex-col gap-3">
-                    <div>
-                        <label class="text-xs font-bold text-detroit-navy uppercase">Address</label>
-                        <input type="text" data-role="address" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
-                    </div>
-
-                    <div data-role="mapWrap" class="rounded-lg overflow-hidden border border-detroit-mint" style="height:160px"></div>
-                    <p class="text-[10px] text-slate-400 font-mono" data-role="coords">--</p>
-
-                    <div>
-                        <label class="text-xs font-bold text-detroit-navy uppercase">Summary</label>
-                        <input type="text" data-role="summary" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
-                    </div>
-
-                    <div>
-                        <label class="text-xs font-bold text-detroit-navy uppercase">Description</label>
-                        <textarea data-role="description" rows="2" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1"></textarea>
-                    </div>
-
-                    <div data-role="natureWrap">
-                        <label class="text-xs font-bold text-detroit-navy uppercase">Nature of Issue</label>
-                        <select data-role="nature" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
-                            <option value="">Loading options...</option>
-                        </select>
-                        <input type="text" data-role="natureCustom" placeholder="Describe the issue" class="hidden w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-2">
-                        <p class="text-[10px] text-slate-400 mt-1">Improve Detroit only accepts one of the listed options; custom text may be rejected.</p>
-                    </div>
-
-                    <div data-role="timingWrap">
-                        <label class="text-xs font-bold text-detroit-navy uppercase">Violation Timing</label>
-                        <input type="text" data-role="timing" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
-                    </div>
-
-                    <div data-role="vehicleWrap" class="hidden">
-                        <label class="text-xs font-bold text-detroit-navy uppercase">Vehicle (optional)</label>
-                        <input type="text" data-role="vehicle" placeholder="Auto-detecting..." class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
-                        <p class="text-[10px] text-slate-400 mt-1">AI-detected make/model/color -- please verify before submitting.</p>
-                    </div>
-
-                    <div data-role="plateWrap">
-                        <label class="text-xs font-bold text-detroit-navy uppercase">License Plate (optional)</label>
-                        <input type="text" data-role="plate" placeholder="Auto-detecting..." class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
-                        <p class="text-[10px] text-slate-400 mt-1" data-role="plateNote">AI-detected from the photo -- please verify before submitting.</p>
-                    </div>
-
-                    <div data-role="crossStreetsWrap" class="hidden">
-                        <label class="text-xs font-bold text-detroit-navy uppercase">Closest Cross Streets</label>
-                        <input type="text" data-role="crossStreets" placeholder="Looking up..." class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
-                        <p class="text-[10px] text-slate-400 mt-1">Auto-detected from the photo's location -- please verify.</p>
-                    </div>
-
-                    <div>
-                        <label class="text-xs font-bold text-detroit-navy uppercase">Bike Lane Uprising Category</label>
-                        <select data-role="bluCategory" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
-                            ${bluCategoryOptionsHtml()}
-                        </select>
-                        <p class="text-[10px] text-slate-400 mt-1">Used when this report is auto-mirrored to Bike Lane Uprising. Defaults per geofence; change if it's not a vehicle obstruction.</p>
-                    </div>
-
-                    <div class="bg-white border border-slate-200 rounded-lg p-3">
-                        <label class="flex items-start gap-2 text-xs font-semibold text-detroit-dark">
-                            <input type="checkbox" data-role="suppressReport" class="mt-0.5">
-                            Suppress Municipal Malparkage Report
-                        </label>
-                        <p class="text-[10px] text-slate-400 mt-1">Skips reporting this photo to the City of Detroit. Still reports to Bike Lane Uprising and updates your submission history, streaks, and plate count.</p>
-                    </div>
-
-                    <button data-role="submitBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition">
-                        Submit to Improve Detroit
-                    </button>
-                    <p data-role="itemMsg" class="text-center text-xs font-medium"></p>
-                </div>
+                <svg class="w-5 h-5 text-slate-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
             `;
-            queueContainer.appendChild(wrapper);
+            queueContainer.appendChild(card);
 
-            item.wrapper = wrapper;
+            const detail = document.createElement('div');
+            detail.className = 'flex flex-col gap-3';
+            detail.innerHTML = `
+                <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Address</label>
+                    <input type="text" data-role="address" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                </div>
+
+                <div data-role="mapWrap" class="rounded-lg overflow-hidden border border-detroit-mint" style="height:160px"></div>
+                <p class="text-[10px] text-slate-400 font-mono" data-role="coords">--</p>
+
+                <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Summary</label>
+                    <input type="text" data-role="summary" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                </div>
+
+                <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Description</label>
+                    <textarea data-role="description" rows="2" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1"></textarea>
+                </div>
+
+                <div data-role="natureWrap">
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Nature of Issue</label>
+                    <select data-role="nature" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                        <option value="">Loading options...</option>
+                    </select>
+                    <input type="text" data-role="natureCustom" placeholder="Describe the issue" class="hidden w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-2">
+                    <p class="text-[10px] text-slate-400 mt-1">Improve Detroit only accepts one of the listed options; custom text may be rejected.</p>
+                </div>
+
+                <div data-role="timingWrap">
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Violation Timing</label>
+                    <input type="text" data-role="timing" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                </div>
+
+                <div data-role="vehicleWrap" class="hidden">
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Vehicle (optional)</label>
+                    <input type="text" data-role="vehicle" placeholder="Auto-detecting..." class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                    <p class="text-[10px] text-slate-400 mt-1">AI-detected make/model/color -- please verify before submitting.</p>
+                </div>
+
+                <div data-role="plateWrap">
+                    <label class="text-xs font-bold text-detroit-navy uppercase">License Plate (optional)</label>
+                    <input type="text" data-role="plate" placeholder="Auto-detecting..." class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                    <p class="text-[10px] text-slate-400 mt-1" data-role="plateNote">AI-detected from the photo -- please verify before submitting.</p>
+                </div>
+
+                <div data-role="crossStreetsWrap" class="hidden">
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Closest Cross Streets</label>
+                    <input type="text" data-role="crossStreets" placeholder="Looking up..." class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                    <p class="text-[10px] text-slate-400 mt-1">Auto-detected from the photo's location -- please verify.</p>
+                </div>
+
+                <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Bike Lane Uprising Category</label>
+                    <select data-role="bluCategory" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                        ${bluCategoryOptionsHtml()}
+                    </select>
+                    <p class="text-[10px] text-slate-400 mt-1">Used when this report is auto-mirrored to Bike Lane Uprising. Defaults per geofence; change if it's not a vehicle obstruction.</p>
+                </div>
+
+                <div class="bg-white border border-slate-200 rounded-lg p-3">
+                    <label class="flex items-start gap-2 text-xs font-semibold text-detroit-dark">
+                        <input type="checkbox" data-role="suppressReport" class="mt-0.5">
+                        Suppress Municipal Malparkage Report
+                    </label>
+                    <p class="text-[10px] text-slate-400 mt-1">Skips reporting this photo to the City of Detroit. Still reports to Bike Lane Uprising and updates your submission history, streaks, and plate count.</p>
+                </div>
+
+                <button data-role="submitBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition">
+                    Submit to Improve Detroit
+                </button>
+                <p data-role="itemMsg" class="text-center text-xs font-medium"></p>
+            `;
+
+            item.wrapper = card;
+            item.detailWrapper = detail;
+            item.fieldsReady = false;
             item.els = {
-                thumbnail: wrapper.querySelector('[data-role="thumbnail"]'),
-                statusBadge: wrapper.querySelector('[data-role="statusBadge"]'),
-                fields: wrapper.querySelector('[data-role="fields"]'),
-                address: wrapper.querySelector('[data-role="address"]'),
-                mapWrap: wrapper.querySelector('[data-role="mapWrap"]'),
-                coords: wrapper.querySelector('[data-role="coords"]'),
-                summary: wrapper.querySelector('[data-role="summary"]'),
-                description: wrapper.querySelector('[data-role="description"]'),
-                natureWrap: wrapper.querySelector('[data-role="natureWrap"]'),
-                nature: wrapper.querySelector('[data-role="nature"]'),
-                natureCustom: wrapper.querySelector('[data-role="natureCustom"]'),
-                timingWrap: wrapper.querySelector('[data-role="timingWrap"]'),
-                timing: wrapper.querySelector('[data-role="timing"]'),
-                vehicleWrap: wrapper.querySelector('[data-role="vehicleWrap"]'),
-                vehicle: wrapper.querySelector('[data-role="vehicle"]'),
-                plateWrap: wrapper.querySelector('[data-role="plateWrap"]'),
-                plate: wrapper.querySelector('[data-role="plate"]'),
-                plateNote: wrapper.querySelector('[data-role="plateNote"]'),
-                crossStreetsWrap: wrapper.querySelector('[data-role="crossStreetsWrap"]'),
-                crossStreets: wrapper.querySelector('[data-role="crossStreets"]'),
-                bluCategory: wrapper.querySelector('[data-role="bluCategory"]'),
-                suppressReport: wrapper.querySelector('[data-role="suppressReport"]'),
-                submitBtn: wrapper.querySelector('[data-role="submitBtn"]'),
-                itemMsg: wrapper.querySelector('[data-role="itemMsg"]'),
+                thumbnail: card.querySelector('[data-role="thumbnail"]'),
+                statusBadge: card.querySelector('[data-role="statusBadge"]'),
+                address: detail.querySelector('[data-role="address"]'),
+                mapWrap: detail.querySelector('[data-role="mapWrap"]'),
+                coords: detail.querySelector('[data-role="coords"]'),
+                summary: detail.querySelector('[data-role="summary"]'),
+                description: detail.querySelector('[data-role="description"]'),
+                natureWrap: detail.querySelector('[data-role="natureWrap"]'),
+                nature: detail.querySelector('[data-role="nature"]'),
+                natureCustom: detail.querySelector('[data-role="natureCustom"]'),
+                timingWrap: detail.querySelector('[data-role="timingWrap"]'),
+                timing: detail.querySelector('[data-role="timing"]'),
+                vehicleWrap: detail.querySelector('[data-role="vehicleWrap"]'),
+                vehicle: detail.querySelector('[data-role="vehicle"]'),
+                plateWrap: detail.querySelector('[data-role="plateWrap"]'),
+                plate: detail.querySelector('[data-role="plate"]'),
+                plateNote: detail.querySelector('[data-role="plateNote"]'),
+                crossStreetsWrap: detail.querySelector('[data-role="crossStreetsWrap"]'),
+                crossStreets: detail.querySelector('[data-role="crossStreets"]'),
+                bluCategory: detail.querySelector('[data-role="bluCategory"]'),
+                suppressReport: detail.querySelector('[data-role="suppressReport"]'),
+                submitBtn: detail.querySelector('[data-role="submitBtn"]'),
+                itemMsg: detail.querySelector('[data-role="itemMsg"]'),
             };
 
             item.els.nature.addEventListener('change', () => {
@@ -1381,9 +1507,13 @@
             });
             item.els.suppressReport.addEventListener('change', () => updateSubmitBtnLabel(item));
             item.els.submitBtn.addEventListener('click', () => submitItem(item));
-            item.els.thumbnail.addEventListener('click', () => openLightbox(previewUrl));
+            item.els.thumbnail.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openLightbox(previewUrl);
+            });
+            card.addEventListener('click', () => openQueueItemFlyIn(item));
 
-            return wrapper;
+            return card;
         }
 
         function addQueueItem(file) {
@@ -1569,8 +1699,7 @@
 
                     item.els.statusBadge.textContent = 'Ready to submit';
                     item.els.statusBadge.className = 'text-xs font-bold uppercase mt-1 text-detroit-dark';
-                    item.els.fields.classList.remove('hidden');
-                    item.els.fields.classList.add('flex');
+                    item.fieldsReady = true;
                     item.status = 'ready';
 
                     initMiniMap(item);
@@ -1623,8 +1752,7 @@
 
                     item.els.statusBadge.textContent = 'Ready to submit';
                     item.els.statusBadge.className = 'text-xs font-bold uppercase mt-1 text-detroit-dark';
-                    item.els.fields.classList.remove('hidden');
-                    item.els.fields.classList.add('flex');
+                    item.fieldsReady = true;
                     item.status = 'ready';
 
                     initMiniMap(item);
@@ -2182,6 +2310,7 @@
             const vehicles = sourceItems.map((item) => item.els.vehicle.value.trim()).filter(Boolean);
 
             sourceItems.forEach((item) => {
+                if (currentFlyInItem === item) closeItemFlyIn();
                 item.wrapper.remove();
                 queue.splice(queue.indexOf(item), 1);
             });
@@ -2206,8 +2335,7 @@
 
             merged.els.statusBadge.textContent = 'Ready to submit';
             merged.els.statusBadge.className = 'text-xs font-bold uppercase mt-1 text-detroit-dark';
-            merged.els.fields.classList.remove('hidden');
-            merged.els.fields.classList.add('flex');
+            merged.fieldsReady = true;
 
             merged.els.address.value = primary.els.address.value;
             merged.els.summary.value = primary.els.summary.value;
@@ -2384,6 +2512,103 @@
         let editingGeofenceId = null;
         let cachedNatureValuesForForm = null;
 
+        // Geofence map picker: draggable Leaflet/OSM marker + a live radius
+        // circle, synced bidirectionally with the gfLat/gfLng/gfRadius number
+        // inputs -- same drag-to-adjust pattern as the photo GPS pin
+        // fine-tuner (see initMiniMap). The circle is a read-only
+        // visualization of gfRadius, not an independently draggable/resizable
+        // shape -- radius stays driven by the number input.
+        const DETROIT_DEFAULT_CENTER = [42.331427, -83.045754];
+        let gfMap = null, gfMarker = null, gfCircle = null;
+
+        function updateGfMapCoordsText() {
+            const pos = gfMarker.getLatLng();
+            document.getElementById('gfMapCoords').textContent = `Pin: ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} (drag to adjust)`;
+        }
+
+        function initGeofenceMap(lat, lng, radiusMeters) {
+            if (gfMap) { gfMap.remove(); gfMap = null; }
+
+            const hasLatLng = Number.isFinite(lat) && Number.isFinite(lng);
+            const center = hasLatLng ? [lat, lng] : DETROIT_DEFAULT_CENTER;
+            const radius = Number.isFinite(radiusMeters) && radiusMeters > 0 ? radiusMeters : 50;
+
+            gfMap = L.map(document.getElementById('gfMapWrap')).setView(center, hasLatLng ? 17 : 12);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors',
+                maxZoom: 19
+            }).addTo(gfMap);
+
+            gfCircle = L.circle(center, {
+                radius, color: '#19a696', fillColor: '#19a696', fillOpacity: 0.15, weight: 2,
+            }).addTo(gfMap);
+            gfMarker = L.marker(center, { draggable: true }).addTo(gfMap);
+
+            gfMarker.on('drag', () => gfCircle.setLatLng(gfMarker.getLatLng()));
+            gfMarker.on('dragend', () => {
+                const pos = gfMarker.getLatLng();
+                document.getElementById('gfLat').value = pos.lat.toFixed(6);
+                document.getElementById('gfLng').value = pos.lng.toFixed(6);
+                gfCircle.setLatLng(pos);
+                updateGfMapCoordsText();
+            });
+            updateGfMapCoordsText();
+        }
+
+        // Editing gfLat/gfLng/gfRadius by hand moves the pin/circle to match
+        // -- the reverse direction of the drag handlers above. Wired once
+        // (not per form-open) directly to the number inputs.
+        function syncGeofenceMapFromInputs() {
+            if (!gfMap) return;
+            const lat = parseFloat(document.getElementById('gfLat').value);
+            const lng = parseFloat(document.getElementById('gfLng').value);
+            const radiusMeters = parseFloat(document.getElementById('gfRadius').value);
+
+            if (Number.isFinite(lat) && Number.isFinite(lng)) {
+                const pos = [lat, lng];
+                gfMarker.setLatLng(pos);
+                gfCircle.setLatLng(pos);
+                gfMap.setView(pos);
+                updateGfMapCoordsText();
+            }
+            if (Number.isFinite(radiusMeters) && radiusMeters > 0) {
+                gfCircle.setRadius(radiusMeters);
+            }
+        }
+        document.getElementById('gfLat').addEventListener('input', syncGeofenceMapFromInputs);
+        document.getElementById('gfLng').addEventListener('input', syncGeofenceMapFromInputs);
+        document.getElementById('gfRadius').addEventListener('input', syncGeofenceMapFromInputs);
+
+        // Read-only list of historyCache entries tagged with this geofence's
+        // id, mirroring renderHistory()'s card styling. Only relevant when
+        // editing an existing (saved) geofence -- hidden for "Add Geofence".
+        function renderGeofenceIncidents(geofenceId) {
+            const section = document.getElementById('gfIncidentsSection');
+            const list = document.getElementById('gfIncidentsList');
+            if (!geofenceId) {
+                section.classList.add('hidden');
+                return;
+            }
+            section.classList.remove('hidden');
+
+            const entries = historyCache.filter((entry) => entry.geofenceId === geofenceId);
+            if (entries.length === 0) {
+                list.innerHTML = '<p class="text-xs text-slate-400 px-1">No incidents logged at this geofence yet.</p>';
+                return;
+            }
+            list.innerHTML = entries.map((entry) => `
+                <div class="bg-white rounded-lg shadow-sm p-3 flex gap-3 items-center">
+                    <img src="${entry.thumbnail}" class="w-12 h-12 object-cover rounded flex-shrink-0" alt="Submitted photo">
+                    <div class="flex-1 min-w-0">
+                        <p class="text-sm font-medium text-detroit-dark truncate">${escapeHtml(entry.address || '')}</p>
+                        <p class="text-[10px] text-slate-400">${entry.suppressed ? 'Not reported to Detroit' : `#${entry.issueId}`} &middot; ${new Date(entry.submittedAt).toLocaleString()}</p>
+                        <p class="text-[10px] font-bold uppercase text-slate-500">${entry.status}${entry.bluStatus ? ` &middot; BLU: ${entry.bluStatus}` : ''}</p>
+                    </div>
+                    ${entry.link ? `<a href="${entry.link}" target="_blank" rel="noopener" class="text-xs text-detroit-teal font-semibold flex-shrink-0">View</a>` : ''}
+                </div>
+            `).join('');
+        }
+
         function describeGeofenceSchedule(g) {
             const days = Array.isArray(g.daysOfWeek) && g.daysOfWeek.length > 0
                 ? g.daysOfWeek.slice().sort().map((d) => DAY_NAMES[d].slice(0, 3)).join(', ')
@@ -2472,6 +2697,9 @@
             document.getElementById('gfLng').value = geofence ? geofence.lng : '';
             document.getElementById('gfRadius').value = geofence ? geofence.radiusMeters : '';
             document.getElementById('gfMessage').value = geofence ? (geofence.message || '') : '';
+
+            initGeofenceMap(geofence ? geofence.lat : null, geofence ? geofence.lng : null, geofence ? geofence.radiusMeters : null);
+            renderGeofenceIncidents(geofence ? geofence.id : null);
 
             const bluSelect = document.getElementById('gfBluCategory');
             bluSelect.innerHTML = bluCategoryOptionsHtml(true);
@@ -2670,6 +2898,10 @@
                 plateIds,
                 photoTakenAt: item.photoDateObj ? item.photoDateObj.toISOString() : null,
                 bluCategory: item.els.bluCategory.value,
+                // Sent to Bike Lane Uprising as part of its notes field (see
+                // scripts/submit-to-blu.js) -- editable up until bluStatus
+                // leaves 'pending' (see isBluLocked/openHistoryFlyIn).
+                description: item.els.description.value.trim(),
                 bluStatus: 'pending',
             };
             try {
@@ -2713,27 +2945,179 @@
             }
         }
 
+        // A history entry is locked to further edits once submit-to-blu.js's
+        // scheduled GitHub Action run has already processed it -- i.e. as
+        // soon as bluStatus moves off its initial 'pending' value. That
+        // covers every terminal status the script writes ('submitted',
+        // 'failed') as well as the client-side 'photo-upload-failed' state
+        // (addToHistory) -- none of those mean "still safe to edit before
+        // BLU sees it".
+        function isBluLocked(entry) {
+            return !!entry.bluStatus && entry.bluStatus !== 'pending';
+        }
+
         function renderHistory() {
             if (historyCache.length === 0) {
                 historyList.innerHTML = '<p class="text-xs text-slate-400 px-1">No submissions yet.</p>';
             } else {
                 historyList.innerHTML = historyCache.map((entry, idx) => `
-                    <div class="bg-white rounded-lg shadow-sm p-3 flex gap-3 items-center">
+                    <div class="bg-white rounded-lg shadow-sm p-3 flex gap-3 items-center cursor-pointer hover:shadow-md transition" onclick="openHistoryFlyIn(${idx})">
                         <img src="${entry.thumbnail}" class="w-12 h-12 object-cover rounded flex-shrink-0" alt="Submitted photo">
                         <div class="flex-1 min-w-0">
                             <p class="text-sm font-medium text-detroit-dark truncate">${entry.address}</p>
-                            <p class="text-[10px] text-slate-400">${entry.suppressed ? 'Not reported to Detroit' : `#${entry.issueId}`} &middot; ${new Date(entry.submittedAt).toLocaleString()}</p>
-                            <p class="text-[10px] font-bold uppercase text-slate-500">${entry.status}${entry.bluStatus ? ` &middot; BLU: ${entry.bluStatus}` : ''}</p>
+                            <p class="text-[10px] font-bold uppercase text-slate-500 truncate">${entry.status}${entry.bluStatus ? ` &middot; BLU: ${entry.bluStatus}` : ''}</p>
                         </div>
-                        <div class="flex flex-col gap-1 flex-shrink-0 items-stretch">
-                            ${entry.link ? `<a href="${entry.link}" target="_blank" rel="noopener" class="text-xs text-detroit-teal font-semibold text-center">View</a>` : ''}
-                            ${entry.suppressed ? '' : `<button class="text-xs text-slate-500 hover:text-detroit-dark" onclick="refreshHistoryStatus(${idx})">Refresh</button>`}
-                        </div>
+                        <svg class="w-4 h-4 text-slate-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                        </svg>
                     </div>
                 `).join('');
             }
             renderOffenders();
             renderStats();
+        }
+
+        // Opens a submitted report's compact history card into the shared
+        // fly-in (see openQueueItemFlyIn for the queue-card counterpart).
+        // Unlike a queue item's detail panel (built once, reparented in and
+        // out), this is rebuilt fresh from the current historyCache entry on
+        // every open -- history cards are cheap read-only summaries rebuilt
+        // wholesale by renderHistory() on every Firestore snapshot, so there
+        // isn't a persistent per-entry DOM node to reparent the way queue
+        // items have.
+        function openHistoryFlyIn(idx) {
+            const entry = historyCache[idx];
+            if (!entry) return;
+            if (historyFlyInMap) { historyFlyInMap.remove(); historyFlyInMap = null; }
+            historyFlyInMarker = null;
+
+            const locked = isBluLocked(entry);
+            itemFlyInTitle.textContent = entry.address || `Issue #${entry.issueId}`;
+
+            itemFlyInBody.innerHTML = `
+                <div class="bg-white rounded-lg shadow-sm p-3 flex gap-3 items-center">
+                    <img src="${entry.thumbnail}" class="w-16 h-16 object-cover rounded-lg flex-shrink-0" alt="Submitted photo">
+                    <div class="flex-1 min-w-0">
+                        <p class="text-xs text-slate-400">${entry.suppressed ? 'Not reported to Detroit' : `#${entry.issueId}`} &middot; ${new Date(entry.submittedAt).toLocaleString()}</p>
+                        <p class="text-xs font-bold uppercase text-slate-500 mt-1">${entry.status}${entry.bluStatus ? ` &middot; BLU: ${entry.bluStatus}` : ''}</p>
+                    </div>
+                </div>
+
+                <div class="flex gap-2">
+                    ${entry.link ? `<a href="${entry.link}" target="_blank" rel="noopener" class="flex-1 text-center text-xs text-detroit-teal font-semibold border border-detroit-teal rounded-lg py-2">View on Improve Detroit</a>` : ''}
+                    ${entry.suppressed ? '' : `<button id="hfRefreshBtn" class="flex-1 text-xs text-slate-600 font-semibold border border-slate-300 rounded-lg py-2 hover:bg-slate-50">Refresh Status</button>`}
+                </div>
+
+                ${locked ? `<p class="text-center text-xs font-semibold text-slate-500 bg-slate-100 rounded-lg py-2 px-3">Locked — already sent to Bike Lane Uprising</p>` : ''}
+
+                <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Address</label>
+                    <input type="text" id="hfAddress" value="${escapeHtml(entry.address || '')}" ${locked ? 'disabled' : ''} class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1 disabled:bg-slate-100 disabled:text-slate-400">
+                </div>
+
+                <div id="hfMapWrap" class="rounded-lg overflow-hidden border border-detroit-mint" style="height:160px"></div>
+                <p class="text-[10px] text-slate-400 font-mono" id="hfCoords">--</p>
+
+                <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Description (sent to Bike Lane Uprising)</label>
+                    <textarea id="hfDescription" rows="3" ${locked ? 'disabled' : ''} class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1 disabled:bg-slate-100 disabled:text-slate-400">${escapeHtml(entry.description || '')}</textarea>
+                </div>
+
+                <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">License Plate</label>
+                    <input type="text" id="hfPlate" value="${escapeHtml(entry.plate || '')}" ${locked ? 'disabled' : ''} class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1 disabled:bg-slate-100 disabled:text-slate-400">
+                </div>
+
+                <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Bike Lane Uprising Category</label>
+                    <select id="hfBluCategory" ${locked ? 'disabled' : ''} class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1 disabled:bg-slate-100 disabled:text-slate-400">
+                        ${bluCategoryOptionsHtml()}
+                    </select>
+                </div>
+
+                ${locked ? '' : `
+                <button id="hfSaveBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition">Save Changes</button>
+                <p id="hfMsg" class="text-center text-xs font-medium"></p>
+                `}
+            `;
+
+            document.getElementById('hfBluCategory').value = entry.bluCategory || '';
+
+            const lat = Number.isFinite(entry.lat) ? entry.lat : null;
+            const lng = Number.isFinite(entry.lng) ? entry.lng : null;
+            if (lat != null && lng != null) {
+                historyFlyInMap = L.map(document.getElementById('hfMapWrap'), {
+                    dragging: !locked, touchZoom: !locked, scrollWheelZoom: !locked, doubleClickZoom: !locked, boxZoom: !locked,
+                }).setView([lat, lng], 17);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; OpenStreetMap contributors',
+                    maxZoom: 19,
+                }).addTo(historyFlyInMap);
+                historyFlyInMarker = L.marker([lat, lng], { draggable: !locked }).addTo(historyFlyInMap);
+
+                const updateHfCoordsText = () => {
+                    const pos = historyFlyInMarker.getLatLng();
+                    document.getElementById('hfCoords').textContent = `Pin: ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}${locked ? '' : ' (drag to adjust)'}`;
+                };
+                historyFlyInMarker.on('dragend', updateHfCoordsText);
+                updateHfCoordsText();
+            } else {
+                document.getElementById('hfMapWrap').innerHTML = '<p class="text-xs text-slate-400 p-2">No location on file.</p>';
+            }
+
+            if (!entry.suppressed) {
+                document.getElementById('hfRefreshBtn').addEventListener('click', () => refreshHistoryStatus(idx));
+            }
+            if (!locked) {
+                document.getElementById('hfSaveBtn').addEventListener('click', () => saveHistoryEdits(idx));
+            }
+
+            itemFlyInScreen.classList.remove('hidden');
+            currentFlyInItem = null;
+            currentFlyInKind = 'history';
+            setTimeout(() => { if (historyFlyInMap) historyFlyInMap.invalidateSize(); }, 50);
+        }
+
+        // Persists edits made in the history fly-in (#3: post-submission
+        // editing up to Bike Lane Uprising) -- a plain Firestore update on
+        // the same history doc submit-to-blu.js reads from. Only reachable
+        // while bluStatus is still 'pending' (see isBluLocked); the fly-in
+        // doesn't even render a Save button once locked.
+        async function saveHistoryEdits(idx) {
+            const entry = historyCache[idx];
+            if (!entry) return;
+            const msg = document.getElementById('hfMsg');
+            const address = document.getElementById('hfAddress').value.trim();
+            const description = document.getElementById('hfDescription').value.trim();
+            const plate = document.getElementById('hfPlate').value.trim();
+            const bluCategory = document.getElementById('hfBluCategory').value;
+            const pos = historyFlyInMarker ? historyFlyInMarker.getLatLng() : { lat: entry.lat, lng: entry.lng };
+
+            const updates = {
+                address,
+                description,
+                plate: plate || null,
+                plateIds: parsePlateIds(plate),
+                bluCategory,
+                lat: pos.lat,
+                lng: pos.lng,
+            };
+
+            msg.textContent = 'Saving...';
+            msg.className = 'text-center text-xs font-medium text-detroit-teal';
+            try {
+                const uid = currentUid || await historySignedIn;
+                await historyCollection(uid).doc(String(entry.issueId)).update(updates);
+                msg.textContent = 'Saved ✓';
+                msg.className = 'text-center text-xs font-bold text-detroit-dark';
+                logToConsole(`Updated report #${entry.issueId}.`);
+                // onSnapshot picks this up and calls renderHistory() itself;
+                // the already-open fly-in is left showing what was just saved.
+            } catch (err) {
+                msg.textContent = 'Could not save -- check debug console.';
+                msg.className = 'text-center text-xs font-medium text-red-600';
+                logToConsole(`Could not save edits for #${entry.issueId}: ${err instanceof Error ? err.message : err}`, true);
+            }
         }
 
         // Groups historyCache by normalized plate for the Repeat Offenders

@@ -1,6 +1,18 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // The user doc itself -- currently just { lastSeenVersion }, tracking
+    // which APP_VERSION's release notes this account has already seen (see
+    // index.html's checkReleaseNotesAutoPopup), so it follows the account
+    // across devices/sessions the same way history/geofences do. Same
+    // owner-only rule as the subcollections below.
+    match /users/{uid} {
+      allow read, write: if request.auth != null
+        && request.auth.uid == uid
+        && request.auth.token.email == 'aschubatis@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
     match /users/{uid}/history/{issueId} {
       allow read, write: if request.auth != null
         && request.auth.uid == uid
