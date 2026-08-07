@@ -30,6 +30,30 @@ service cloud.firestore {
         && request.auth.token.email_verified == true;
     }
 
+    // Municipal Parking Department notification letters (see index.html's
+    // "Notify Parking Dept" screen) -- one doc per generated letter. Same
+    // owner-only rule as history/plates/geofences above.
+    match /users/{uid}/parkingDeptLetters/{letterId} {
+      allow read, write: if request.auth != null
+        && request.auth.uid == uid
+        && request.auth.token.email == 'aschubatis@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    // User-editable settings (currently just settings/parkingDeptLetter:
+    // sender/recipient mailing addresses for the Parking Dept letter).
+    // Deliberately NOT the config/secrets pattern below -- these are
+    // user-owned, user-editable values (not a revocable API key), and they
+    // must never live in config.js since that file is committed to a
+    // public repo and a home mailing address has no business being there.
+    // Same owner-only rule as history/plates/geofences above.
+    match /users/{uid}/settings/{settingId} {
+      allow read, write: if request.auth != null
+        && request.auth.uid == uid
+        && request.auth.token.email == 'aschubatis@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
     // Runtime secrets (config/secrets: { geminiApiKey }) that shouldn't live
     // in config.js, since that file is committed to a public repo and
     // Google auto-revokes any service-account-bound key it finds there.
