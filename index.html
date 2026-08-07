@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.17.1)</title>
+    <title>You Can't Park There (v3.18.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -37,7 +37,7 @@
          file -- bump it (matching APP_VERSION below) whenever config.js or
          this file changes, so a browser that loaded the page just before a
          deploy doesn't keep running stale config after a normal refresh. -->
-    <script src="config.js?v=3.17.1"></script>
+    <script src="config.js?v=3.18.0"></script>
     <!-- Firebase (compat build, so it works as a plain global like the rest
          of this no-build page) -- syncs submission history to Firestore. -->
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -91,16 +91,6 @@
         </div>
         <button id="geofenceMenuBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Geofence Maintenance
-        </button>
-        <!-- One-time scaffolding for mobile use (no console access to run
-             `npm run seed-geofences` from a phone) -- writes the same
-             starting geofences as scripts/seed-geofences.js, but through
-             the already-signed-in client SDK instead of firebase-admin.
-             Per v3.16.1's request: disable/remove this in the next release
-             once the starting geofences have been seeded. See
-             seedStartingGeofences()/SEED_GEOFENCES below. -->
-        <button id="seedGeofencesBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
-            Seed Starting Geofences
         </button>
         <button id="parkingDeptMenuBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Notify Parking Dept
@@ -221,10 +211,18 @@
                      from the same historyCache renderHistory() uses. Only shown
                      when editing an existing geofence (a new, unsaved one has no
                      id for entries to match against). Editing a report itself
-                     happens from its own fly-in (openHistoryFlyIn), not here. -->
+                     happens from its own fly-in (openHistoryFlyIn), not here.
+                     Below it, "Link Existing Issue" (renderGeofenceLinkResults)
+                     lets an old report -- submitted before this geofence
+                     existed, or auto-matched to the wrong one -- be retroactively
+                     tagged with this geofence's id. -->
                 <div id="gfIncidentsSection" class="hidden">
                     <label class="text-xs font-bold text-detroit-navy uppercase">Incidents At This Geofence</label>
                     <div id="gfIncidentsList" class="flex flex-col gap-2 mt-1"></div>
+
+                    <label class="text-xs font-bold text-detroit-navy uppercase mt-3 block">Link Existing Issue</label>
+                    <input type="text" id="gfLinkSearch" placeholder="Search by address, plate, or issue #" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                    <div id="gfLinkResults" class="flex flex-col gap-2 mt-1"></div>
                 </div>
 
                 <button id="gfSaveBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition mt-2">
@@ -544,7 +542,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.17.1</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.18.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -585,10 +583,17 @@
     </div>
     </div> <!-- #reportsTab -->
 
-    <!-- Repeat Offenders: every logged plate, grouped, with how many times
-         each has been reported -- see renderOffenders(). Purely derived
-         from the same historyCache the Submission History list uses. -->
+    <!-- Repeat Offenders: two modes toggled by offendersMode -- every logged
+         plate grouped by how many times it's been reported (renderOffendersByPlate),
+         or every geofence grouped by how many incidents it's logged
+         (renderOffendersByGeofence). See renderOffenders() for the dispatch.
+         Purely derived from the same historyCache the Submission History
+         list uses. -->
     <div id="offendersTab" class="hidden">
+        <div class="flex gap-2 mb-4">
+            <button id="offendersModePlateBtn" class="flex-1 py-1.5 rounded-lg text-xs font-semibold transition bg-detroit-teal text-white shadow">By Plate</button>
+            <button id="offendersModeGeofenceBtn" class="flex-1 py-1.5 rounded-lg text-xs font-semibold transition bg-white text-detroit-navy shadow-sm">By Geofence</button>
+        </div>
         <h2 class="text-xs font-bold text-detroit-navy uppercase mb-2 px-1">Repeat Offenders</h2>
         <div id="offendersList" class="flex flex-col gap-2"></div>
     </div>
@@ -609,14 +614,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.17.1)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.18.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.17.1)...
+            App initialized (v3.18.0)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -628,13 +633,19 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.17.1';
+        const APP_VERSION = '3.18.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.18.0', date: '2026-08-07', notes: [
+                'Geofence Maintenance can now retroactively link an old report to a geofence (or unlink it) via a new "Link Existing Issue" search -- handy for reports submitted before a geofence existed or auto-matched to the wrong one.',
+                'The Repeat Offenders tab now has a By Plate / By Geofence toggle -- By Geofence groups every incident by the geofence it was logged at instead of by plate.',
+                'Stats tab: added Geofences Hit/Repeat Geofences tiles, a Geofence Leaderboard, and three geofence-based badges (On the Map, Beat Cop, Known Hotspot).',
+                'Removed the one-time "Seed Starting Geofences" hamburger menu button now that the starting geofences are seeded -- use `npm run seed-geofences` for any future one-off seeding.',
+            ] },
             { version: '3.17.1', date: '2026-08-07', notes: [
                 'Added "Notify Parking Dept" to the hamburger menu: search past submissions for the City\'s "car gone on arrival -- contact Municipal Parking Department" boilerplate reply, generate a mailable .docx letter listing the flagged incidents (grouped by geofence, with a Miscellaneous section and a duplicate Repeat Offenders roundup), and -- as a separate step, after you\'ve actually mailed it -- post a dated follow-up comment back onto each SeeClickFix issue.',
                 'Detection checks a configurable keyword list first, falling back to Gemini (once per issue, not per comment) only when nothing matches.',
@@ -703,78 +714,6 @@
             return defaultOption + CONFIG.bluCategories.map((c) =>
                 `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`
             ).join('');
-        }
-
-        // Backs the "Seed Starting Geofences" menu button -- must stay
-        // logically identical to scripts/seed-geofences.js's GEOFENCES
-        // (duplicated rather than shared since that one runs under Node
-        // with firebase-admin, not in the browser). One-time scaffolding
-        // for seeding from a phone with no console access -- see the HTML
-        // comment above the button and seedStartingGeofences() below for
-        // the plan to remove this in the release after v3.16.1.
-        const SEED_GEOFENCES = [
-            {
-                id: 'gar-building',
-                name: 'GAR Building valet staging (Sexy Steak)',
-                lat: 42.33494474658147,
-                lng: -83.05480479874544,
-                radiusMeters: 100,
-                message: 'Valet operator at the GAR Building (Sexy Steak, 1942 Grand River) is using the Grand River bicycle lane as a staging area, blocking the bike lane. This is a recurring problem -- see previous {{PRIOR_COMPLAINTS}}.',
-                bluCategory: 'Company Vehicle',
-                improveDetroitCategory: '',
-                daysOfWeek: [],
-                startHour: 14,
-                endHour: null,
-                detectRepeatOffenders: true,
-                reportRepeatOffenders: true,
-                detectRepeatIncidents: true,
-                reportRepeatIncidents: true,
-            },
-            {
-                id: 'times-square',
-                name: 'Times Square (Cass & Times Square)',
-                lat: 42.33273028080044,
-                lng: -83.05313484015257,
-                radiusMeters: 35,
-                message: 'Vehicle parked across bicycle lane and hatched road marking at corner of Cass and Times Square. Please note this is a recurring incident. Please see previous {{PRIOR_COMPLAINTS}}.',
-                bluCategory: 'Private Owner Vehicle',
-                improveDetroitCategory: '',
-                daysOfWeek: [],
-                startHour: null,
-                endHour: null,
-                detectRepeatOffenders: true,
-                reportRepeatOffenders: true,
-                detectRepeatIncidents: true,
-                reportRepeatIncidents: true,
-            },
-        ];
-
-        // Writes/updates (merge: true, so it never clobbers edits made
-        // since from the Geofence Maintenance screen) each of
-        // SEED_GEOFENCES into users/{uid}/geofences via the already
-        // signed-in client SDK -- the mobile-friendly equivalent of running
-        // `npm run seed-geofences` from a console.
-        async function seedStartingGeofences() {
-            const names = SEED_GEOFENCES.map((g) => g.name).join(', ');
-            if (!confirm(`Create/update the starting geofences (${names}) in your account? Any other geofences you've added are left alone.`)) return;
-
-            const btn = document.getElementById('seedGeofencesBtn');
-            const originalText = btn.textContent;
-            btn.disabled = true;
-            btn.textContent = 'Seeding...';
-            try {
-                const uid = currentUid || await historySignedIn;
-                for (const { id, ...data } of SEED_GEOFENCES) {
-                    await geofencesCollection(uid).doc(id).set(data, { merge: true });
-                    logToConsole(`Seeded geofence "${id}" (${data.name}).`);
-                }
-                btn.textContent = 'Seeded ✓';
-            } catch (err) {
-                btn.textContent = 'Seed failed';
-                logToConsole(`Could not seed geofences: ${err instanceof Error ? err.message : err}`, true);
-            }
-            btn.disabled = false;
-            setTimeout(() => { btn.textContent = originalText; }, 2500);
         }
 
         // Firestore is the source of truth for submission history. Auth is
@@ -1111,6 +1050,20 @@
         statsRangeBtns.year.addEventListener('click', () => setStatsRange('year'));
         statsRangeBtns.all.addEventListener('click', () => setStatsRange('all'));
 
+        // Repeat Offenders grouping mode (by plate vs by geofence) -- see
+        // renderOffenders()/renderOffendersByPlate()/renderOffendersByGeofence().
+        let offendersMode = 'plate';
+        const offendersModeBtns = { plate: document.getElementById('offendersModePlateBtn'), geofence: document.getElementById('offendersModeGeofenceBtn') };
+        function setOffendersMode(mode) {
+            offendersMode = mode;
+            for (const [key, btn] of Object.entries(offendersModeBtns)) {
+                btn.className = key === mode ? activeRangeClasses : inactiveRangeClasses;
+            }
+            renderOffenders();
+        }
+        offendersModeBtns.plate.addEventListener('click', () => setOffendersMode('plate'));
+        offendersModeBtns.geofence.addEventListener('click', () => setOffendersMode('geofence'));
+
         // Fly-in menu (left side) and the debug console it reveals
         const menuToggleBtn = document.getElementById('menuToggleBtn');
         const menuCloseBtn = document.getElementById('menuCloseBtn');
@@ -1149,10 +1102,6 @@
             geofenceScreen.classList.remove('hidden');
         });
         geofenceCloseBtn.addEventListener('click', () => geofenceScreen.classList.add('hidden'));
-        document.getElementById('seedGeofencesBtn').addEventListener('click', () => {
-            closeMenu();
-            seedStartingGeofences();
-        });
 
         // Notify Parking Dept screen
         const parkingDeptMenuBtn = document.getElementById('parkingDeptMenuBtn');
@@ -2719,6 +2668,7 @@
         document.getElementById('gfLat').addEventListener('input', syncGeofenceMapFromInputs);
         document.getElementById('gfLng').addEventListener('input', syncGeofenceMapFromInputs);
         document.getElementById('gfRadius').addEventListener('input', syncGeofenceMapFromInputs);
+        document.getElementById('gfLinkSearch').addEventListener('input', renderGeofenceLinkResults);
 
         // Read-only list of historyCache entries tagged with this geofence's
         // id, mirroring renderHistory()'s card styling. Only relevant when
@@ -2745,9 +2695,102 @@
                         <p class="text-[10px] text-slate-400">${entry.suppressed ? 'Not reported to Detroit' : `#${entry.issueId}`} &middot; ${new Date(entry.submittedAt).toLocaleString()}</p>
                         <p class="text-[10px] font-bold uppercase text-slate-500">${entry.status}${entry.bluStatus ? ` &middot; BLU: ${entry.bluStatus}` : ''}</p>
                     </div>
-                    ${entry.link ? `<a href="${entry.link}" target="_blank" rel="noopener" class="text-xs text-detroit-teal font-semibold flex-shrink-0">View</a>` : ''}
+                    <div class="flex flex-col gap-1 flex-shrink-0 items-end">
+                        ${entry.link ? `<a href="${entry.link}" target="_blank" rel="noopener" class="text-xs text-detroit-teal font-semibold">View</a>` : ''}
+                        <button class="text-xs text-red-600 font-semibold" onclick="unlinkIssueFromGeofence('${entry.issueId}')">Unlink</button>
+                    </div>
                 </div>
             `).join('');
+        }
+
+        // "Link Existing Issue" search (below the read-only incidents list
+        // above): lets an old report -- submitted before this geofence
+        // existed, or auto-matched to the wrong one -- be retroactively
+        // tagged with this geofence's id. Matches against address, plate,
+        // and issue id; excludes issues already tagged with this geofence
+        // since those already show in the list above. Re-run on every
+        // keystroke (see the gfLinkSearch listener below) and whenever
+        // historyCache changes while the geofence form is open (see
+        // refreshOpenGeofenceIncidents, called from renderHistory()).
+        function renderGeofenceLinkResults() {
+            const results = document.getElementById('gfLinkResults');
+            const term = document.getElementById('gfLinkSearch').value.trim().toLowerCase();
+            if (!term) {
+                results.innerHTML = '';
+                return;
+            }
+
+            const matches = historyCache
+                .filter((entry) => entry.geofenceId !== editingGeofenceId)
+                .filter((entry) => {
+                    const plate = String(entry.plate || '').toLowerCase();
+                    const address = String(entry.address || '').toLowerCase();
+                    return address.includes(term) || plate.includes(term) || String(entry.issueId).toLowerCase().includes(term);
+                })
+                .slice(0, 10);
+
+            if (matches.length === 0) {
+                results.innerHTML = '<p class="text-xs text-slate-400 px-1">No matching issues.</p>';
+                return;
+            }
+
+            results.innerHTML = matches.map((entry) => {
+                const currentGeofence = entry.geofenceId ? geofencesCache.find((g) => g.id === entry.geofenceId) : null;
+                const dateStr = new Date(entry.submittedAt).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+                return `
+                    <div class="bg-white rounded-lg shadow-sm p-3 flex gap-3 items-center">
+                        <img src="${entry.thumbnail}" class="w-10 h-10 object-cover rounded flex-shrink-0" alt="Submitted photo">
+                        <div class="flex-1 min-w-0">
+                            <p class="text-xs font-medium text-detroit-dark truncate">${escapeHtml(entry.address || '')}</p>
+                            <p class="text-[10px] text-slate-400 truncate">${entry.suppressed ? 'Not reported to Detroit' : `#${entry.issueId}`} &middot; ${dateStr}${currentGeofence ? ` &middot; currently: ${escapeHtml(currentGeofence.name)}` : ''}</p>
+                        </div>
+                        <button class="text-xs text-detroit-teal font-semibold flex-shrink-0" onclick="linkIssueToGeofence('${entry.issueId}')">Link</button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Sets/clears a history entry's geofenceId directly in Firestore --
+        // the retroactive counterpart to the automatic geofenceId set at
+        // submission time by a geofence match (see addToHistory/
+        // item.matchedGeofence). onSnapshot picks up the change and calls
+        // renderHistory() itself, which refreshes the open geofence form via
+        // refreshOpenGeofenceIncidents().
+        async function linkIssueToGeofence(issueId) {
+            if (!editingGeofenceId) return;
+            try {
+                const uid = currentUid || await historySignedIn;
+                await historyCollection(uid).doc(String(issueId)).update({ geofenceId: editingGeofenceId });
+                logToConsole(`Linked issue #${issueId} to geofence "${document.getElementById('gfTitle').value}".`);
+                document.getElementById('gfLinkSearch').value = '';
+                renderGeofenceLinkResults();
+            } catch (err) {
+                logToConsole(`Could not link issue #${issueId} to this geofence: ${err instanceof Error ? err.message : err}`, true);
+            }
+        }
+
+        async function unlinkIssueFromGeofence(issueId) {
+            try {
+                const uid = currentUid || await historySignedIn;
+                await historyCollection(uid).doc(String(issueId)).update({ geofenceId: null });
+                logToConsole(`Unlinked issue #${issueId} from its geofence.`);
+            } catch (err) {
+                logToConsole(`Could not unlink issue #${issueId}: ${err instanceof Error ? err.message : err}`, true);
+            }
+        }
+
+        // Called from the end of renderHistory() (alongside
+        // renderOffenders/renderStats/renderParkingDeptCandidates) so a
+        // link/unlink -- or any other history change -- is reflected live
+        // while the Geofence Maintenance form is open, without a second
+        // onSnapshot listener. No-ops while the screen is closed or a new,
+        // unsaved geofence is being added (editingGeofenceId is only set
+        // for an existing geofence -- see showGeofenceForm).
+        function refreshOpenGeofenceIncidents() {
+            if (!editingGeofenceId) return;
+            if (document.getElementById('geofenceScreen').classList.contains('hidden')) return;
+            renderGeofenceIncidents(editingGeofenceId);
+            renderGeofenceLinkResults();
         }
 
         function describeGeofenceSchedule(g) {
@@ -2841,6 +2884,8 @@
 
             initGeofenceMap(geofence ? geofence.lat : null, geofence ? geofence.lng : null, geofence ? geofence.radiusMeters : null);
             renderGeofenceIncidents(geofence ? geofence.id : null);
+            document.getElementById('gfLinkSearch').value = '';
+            renderGeofenceLinkResults();
 
             const bluSelect = document.getElementById('gfBluCategory');
             bluSelect.innerHTML = bluCategoryOptionsHtml(true);
@@ -3117,6 +3162,7 @@
             renderOffenders();
             renderStats();
             renderParkingDeptCandidates();
+            refreshOpenGeofenceIncidents();
         }
 
         // Opens a submitted report's compact history card into the shared
@@ -3262,11 +3308,19 @@
             }
         }
 
-        // Groups historyCache by normalized plate for the Repeat Offenders
-        // tab: every plate ever reported, with how many times, sorted by
-        // frequency (ties broken by most recent report). Purely derived
-        // from historyCache -- no separate Firestore query needed.
+        // Repeat Offenders tab dispatch -- see offendersMode (By Plate /
+        // By Geofence toggle above).
         function renderOffenders() {
+            if (offendersMode === 'geofence') renderOffendersByGeofence();
+            else renderOffendersByPlate();
+        }
+
+        // Groups historyCache by normalized plate for the Repeat Offenders
+        // tab's "By Plate" mode: every plate ever reported, with how many
+        // times, sorted by frequency (ties broken by most recent report).
+        // Purely derived from historyCache -- no separate Firestore query
+        // needed.
+        function renderOffendersByPlate() {
             const groups = new Map();
             for (const entry of historyCache) {
                 for (const plate of platesFromEntry(entry)) {
@@ -3308,6 +3362,65 @@
                     </div>
                 </div>
             `).join('');
+        }
+
+        // Groups historyCache by geofence for the Repeat Offenders tab's
+        // "By Geofence" mode: every geofence that's logged at least one
+        // incident (geofenceId, set at submission time by a geofence
+        // match, or retroactively via "Link Existing Issue" in Geofence
+        // Maintenance), with how many times, sorted by frequency. Incidents
+        // with no geofenceId are grouped under "Not Linked to a Geofence"
+        // at the end.
+        function renderOffendersByGeofence() {
+            const groups = new Map();
+            for (const entry of historyCache) {
+                const key = entry.geofenceId || null;
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(entry);
+            }
+
+            const named = [...groups.entries()]
+                .filter(([geofenceId]) => geofenceId !== null)
+                .map(([geofenceId, entries]) => ({
+                    name: (geofencesCache.find((g) => g.id === geofenceId) || {}).name || 'Deleted Geofence',
+                    entries: entries.slice().sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt)),
+                }))
+                .sort((a, b) => b.entries.length - a.entries.length
+                    || new Date(b.entries[0].submittedAt) - new Date(a.entries[0].submittedAt));
+
+            const unlinked = groups.get(null) || [];
+
+            if (named.length === 0 && unlinked.length === 0) {
+                offendersList.innerHTML = '<p class="text-xs text-slate-400 px-1">No incidents logged yet.</p>';
+                return;
+            }
+
+            const groupCardHtml = ({ name, entries }) => `
+                <div class="bg-white rounded-lg shadow-sm p-3">
+                    <div class="flex justify-between items-center gap-2">
+                        <p class="text-sm font-bold text-detroit-dark truncate">${escapeHtml(name)}</p>
+                        <p class="text-[10px] font-bold uppercase flex-shrink-0 ${entries.length > 1 ? 'text-red-600' : 'text-slate-400'}">
+                            ${entries.length} incident${entries.length === 1 ? '' : 's'}
+                        </p>
+                    </div>
+                    <div class="mt-1 flex flex-col gap-0.5">
+                        ${entries.map((entry) => {
+                            const label = entry.suppressed ? 'Suppressed' : `#${entry.issueId}`;
+                            const dateStr = new Date(entry.submittedAt).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+                            const inner = `${label} &middot; ${dateStr}${entry.plate ? ` &middot; ${escapeHtml(entry.plate)}` : ''}`;
+                            return entry.link
+                                ? `<a href="${entry.link}" target="_blank" rel="noopener" class="text-[10px] text-slate-500 hover:text-detroit-teal truncate">${inner}</a>`
+                                : `<span class="block text-[10px] text-slate-500 truncate">${inner}</span>`;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+
+            offendersList.innerHTML = named.map(groupCardHtml).join('')
+                + (unlinked.length > 0 ? groupCardHtml({
+                    name: 'Not Linked to a Geofence',
+                    entries: unlinked.slice().sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt)),
+                }) : '');
         }
 
         // ==========================================
@@ -3449,6 +3562,22 @@
                 inRange.flatMap(platesFromEntry).filter((p) => allTimeCounts.get(p) > 1)
             ).size;
 
+            // Same shape as allTimeCounts/repeatOffendersInRange above, but
+            // keyed by geofenceId instead of plate -- backs the Geofences
+            // Hit/Repeat Geofences tiles, the Geofence Leaderboard, and the
+            // geofence-based badges below. Entries with no geofenceId (never
+            // matched or linked -- see linkIssueToGeofence) aren't counted.
+            const geofenceCounts = new Map();
+            for (const entry of historyCache) {
+                if (!entry.geofenceId) continue;
+                geofenceCounts.set(entry.geofenceId, (geofenceCounts.get(entry.geofenceId) || 0) + 1);
+            }
+            const geofencesInRange = inRange.map((e) => e.geofenceId).filter(Boolean);
+            const uniqueGeofencesInRange = new Set(geofencesInRange).size;
+            const repeatGeofencesInRange = new Set(
+                geofencesInRange.filter((id) => geofenceCounts.get(id) > 1)
+            ).size;
+
             const { current: currentStreak, longest: longestStreak } = computeStreaks(historyCache);
 
             const busiestStreet = mostCommon(inRange.map((e) => e.address).filter(Boolean));
@@ -3458,10 +3587,21 @@
             // Repeat offender leaderboard -- always all-time, a hall of fame.
             const leaderboard = [...allTimeCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
 
+            // Geofence leaderboard -- same idea, keyed by geofence name
+            // instead of plate. A geofence deleted since its incidents were
+            // logged still shows up (its incidents aren't orphaned), just
+            // without a resolvable name.
+            const geofenceLeaderboard = [...geofenceCounts.entries()]
+                .map(([geofenceId, count]) => [(geofencesCache.find((g) => g.id === geofenceId) || {}).name || 'Deleted Geofence', count])
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5);
+
             const firstReport = historyCache.slice().sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt))[0];
 
             const totalAllTime = historyCache.length;
             const maxPlateCount = leaderboard.length > 0 ? leaderboard[0][1] : 0;
+            const uniqueGeofencesAllTime = geofenceCounts.size;
+            const maxGeofenceCount = geofenceLeaderboard.length > 0 ? geofenceLeaderboard[0][1] : 0;
             const hasNightOwl = historyCache.some((e) => {
                 const h = new Date(e.photoTakenAt || e.submittedAt).getHours();
                 return h >= 22 || h < 5;
@@ -3477,6 +3617,9 @@
                 { icon: '⚡', name: 'Unstoppable', desc: '30-day reporting streak', earned: longestStreak >= 30, progress: `${Math.min(longestStreak, 30)}/30` },
                 { icon: '🕵️', name: 'Repeat Buster', desc: 'Catch the same plate twice', earned: maxPlateCount >= 2, progress: `${Math.min(maxPlateCount, 2)}/2` },
                 { icon: '😈', name: 'Nemesis', desc: 'Catch the same plate 5 times', earned: maxPlateCount >= 5, progress: `${Math.min(maxPlateCount, 5)}/5` },
+                { icon: '📍', name: 'On the Map', desc: 'Log an incident at a geofence', earned: uniqueGeofencesAllTime >= 1, progress: `${Math.min(uniqueGeofencesAllTime, 1)}/1` },
+                { icon: '🗺️', name: 'Beat Cop', desc: 'Log incidents at 5 different geofences', earned: uniqueGeofencesAllTime >= 5, progress: `${Math.min(uniqueGeofencesAllTime, 5)}/5` },
+                { icon: '🚧', name: 'Known Hotspot', desc: 'Catch 5 incidents at the same geofence', earned: maxGeofenceCount >= 5, progress: `${Math.min(maxGeofenceCount, 5)}/5` },
                 { icon: '🦉', name: 'Night Owl', desc: 'Report a vehicle spotted 10pm-5am', earned: hasNightOwl },
                 { icon: '🐦', name: 'Early Bird', desc: 'Report a vehicle spotted before 7am', earned: hasEarlyBird },
             ];
@@ -3495,6 +3638,17 @@
                     <div class="bg-white rounded-lg shadow-sm p-3 text-center">
                         <p class="text-2xl font-montserrat font-extrabold text-detroit-dark">${repeatOffendersInRange}</p>
                         <p class="text-[10px] uppercase text-slate-500 font-semibold">Repeats Caught</p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="bg-white rounded-lg shadow-sm p-3 text-center">
+                        <p class="text-2xl font-montserrat font-extrabold text-detroit-dark">${uniqueGeofencesInRange}</p>
+                        <p class="text-[10px] uppercase text-slate-500 font-semibold">Geofences Hit</p>
+                    </div>
+                    <div class="bg-white rounded-lg shadow-sm p-3 text-center">
+                        <p class="text-2xl font-montserrat font-extrabold text-detroit-dark">${repeatGeofencesInRange}</p>
+                        <p class="text-[10px] uppercase text-slate-500 font-semibold">Repeat Geofences</p>
                     </div>
                 </div>
 
@@ -3529,6 +3683,20 @@
                                 <div class="flex justify-between items-center text-sm">
                                     <span class="font-mono text-detroit-dark">${['🥇', '🥈', '🥉'][idx] || `#${idx + 1}`} ${escapeHtml(plate)}</span>
                                     <span class="text-[10px] font-bold text-slate-500">${count} incident${count === 1 ? '' : 's'}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `}
+                </div>
+
+                <div class="bg-white rounded-lg shadow-sm p-3">
+                    <p class="text-[10px] font-bold text-detroit-navy uppercase mb-2">Geofence Leaderboard</p>
+                    ${geofenceLeaderboard.length === 0 ? '<p class="text-xs text-slate-400">No geofence incidents yet.</p>' : `
+                        <div class="flex flex-col gap-1">
+                            ${geofenceLeaderboard.map(([name, count], idx) => `
+                                <div class="flex justify-between items-center text-sm gap-2">
+                                    <span class="text-detroit-dark truncate">${['🥇', '🥈', '🥉'][idx] || `#${idx + 1}`} ${escapeHtml(name)}</span>
+                                    <span class="text-[10px] font-bold text-slate-500 flex-shrink-0">${count} incident${count === 1 ? '' : 's'}</span>
                                 </div>
                             `).join('')}
                         </div>
