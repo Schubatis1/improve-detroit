@@ -1934,6 +1934,40 @@
             });
         }
 
+        // Primary model plus the quota-error fallback used by both Gemini
+        // call sites below (classifyPhotoWithGemini, classifyCommentWithGemini).
+        // gemini-flash-latest's quota is shared/tighter than gemini-2.5-flash's,
+        // so on a 429 (RESOURCE_EXHAUSTED) this retries once against the older
+        // model instead of failing the whole call until the quota resets.
+        const GEMINI_MODEL = 'gemini-flash-latest';
+        const GEMINI_FALLBACK_MODEL = 'gemini-2.5-flash';
+
+        async function callGeminiWithFallback(requestBody, logPrefix) {
+            const attempt = async (model) => {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${CONFIG.geminiApiKey}`;
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody),
+                });
+                if (!response.ok) {
+                    const errText = await response.text();
+                    const err = new Error(`Gemini API Error ${response.status}: ${errText}`);
+                    err.status = response.status;
+                    throw err;
+                }
+                return response.json();
+            };
+
+            try {
+                return await attempt(GEMINI_MODEL);
+            } catch (err) {
+                if (err.status !== 429) throw err;
+                logToConsole(`${logPrefix}Gemini quota exceeded on ${GEMINI_MODEL}, retrying with ${GEMINI_FALLBACK_MODEL}...`, true);
+                return await attempt(GEMINI_FALLBACK_MODEL);
+            }
+        }
+
         // Classifies a photo via Gemini as either a vehicle blocking the bike
         // lane or some other bike lane issue (glass, sand, a garbage bin,
         // construction debris, an actual pothole, etc.), extracting the
@@ -1964,9 +1998,6 @@
                 const upload = await downscaleImage(item.file);
                 const base64 = await blobToBase64(upload);
                 logToConsole(`[${item.file.name}] Sending photo to Gemini (${Math.round(upload.size / 1024)}KB)...`);
-
-                const model = 'gemini-flash-latest';
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${CONFIG.geminiApiKey}`;
 
                 // Outside a geofence, give Gemini the rotating description
                 // list (with {{ADDRESS}}/{{PRIOR_COMPLAINTS}} already filled
@@ -2008,26 +2039,16 @@
                     + 'blu_category to "Construction" if construction-related, otherwise "Other". '
                     + 'Use null for anything you cannot determine with reasonable confidence -- do not guess.';
 
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{
-                            parts: [
-                                { text: prompt },
-                                { inline_data: { mime_type: 'image/jpeg', data: base64 } },
-                            ],
-                        }],
-                        generationConfig: { responseMimeType: 'application/json' },
-                    }),
-                });
+                const data = await callGeminiWithFallback({
+                    contents: [{
+                        parts: [
+                            { text: prompt },
+                            { inline_data: { mime_type: 'image/jpeg', data: base64 } },
+                        ],
+                    }],
+                    generationConfig: { responseMimeType: 'application/json' },
+                }, `[${item.file.name}] `);
 
-                if (!response.ok) {
-                    const errText = await response.text();
-                    throw new Error(`Gemini API Error ${response.status}: ${errText}`);
-                }
-
-                const data = await response.json();
                 const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
                 if (!text) throw new Error('Gemini returned no content');
                 const result = JSON.parse(text);
@@ -3894,8 +3915,6 @@
                 if (!CONFIG.geminiApiKey) {
                     throw new Error('Gemini API key not available (Firestore config/secrets doc missing, empty, or unreadable)');
                 }
-                const model = 'gemini-flash-latest';
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${CONFIG.geminiApiKey}`;
                 const prompt = 'You are looking at comments left by City of Detroit staff/police on a bike-lane obstruction '
                     + 'report. Determine whether any of them mean: the responding officer found no vehicle/violation present '
                     + '(e.g. "car gone on arrival") and is directing the reporter to contact the City of Detroit Municipal '
@@ -3903,19 +3922,10 @@
                     + 'Respond with ONLY a JSON object, no other text, in exactly this shape: '
                     + '{"isParkingDeptReferral": boolean}. Comments (newest first): ' + JSON.stringify(commentTexts);
 
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: prompt }] }],
-                        generationConfig: { responseMimeType: 'application/json' },
-                    }),
-                });
-                if (!response.ok) {
-                    const errText = await response.text();
-                    throw new Error(`Gemini API Error ${response.status}: ${errText}`);
-                }
-                const data = await response.json();
+                const data = await callGeminiWithFallback({
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: { responseMimeType: 'application/json' },
+                }, '');
                 const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
                 if (!text) throw new Error('Gemini returned no content');
                 const result = JSON.parse(text);
