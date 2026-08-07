@@ -104,6 +104,44 @@ window.APP_CONFIG = {
         'Other  (damaged lane / snow / debris / pedestrian / etc.)',
     ],
 
+    // "Notify Parking Dept" (hamburger menu) -- policy/wording for scanning
+    // past reports for the City's boilerplate "car gone on arrival, contact
+    // Municipal Parking Department Enforcement" reply and generating a
+    // mailable letter. This is the wording/policy half only -- the sender's
+    // and recipient's actual mailing addresses are PII and deliberately
+    // live in Firestore instead (users/{uid}/settings/parkingDeptLetter,
+    // edited from the app), never here, for the same reason geminiApiKey
+    // isn't here: this file is committed to a public repo.
+    parkingDeptLetter: {
+        // Case-insensitive substring match against a comment's text --
+        // checked before ever calling Gemini (see classifyCommentWithGemini
+        // in index.html), so a normal run costs nothing extra. Seeded from
+        // a real example: "...Car gone on arrival. No violations at this
+        // time. City of Detroit Municipal Parking Department Enforcement
+        // phone number is 313-221-2558."
+        keywordTriggers: [
+            'Municipal Parking Department',
+        ],
+        parkingDeptPhone: '313-221-2558',
+        // Search (hamburger menu -> Notify Parking Dept -> Search) checks
+        // at most this many not-yet-flagged issues per tap, least-recently-
+        // checked first -- same reasoning as scripts/submit-to-blu.js's
+        // --limit 10 default: keeps an on-demand mobile action fast; tap
+        // Search again for more.
+        searchCapPerRun: 15,
+        // Letter template text. {{DATE}}/{{GEOFENCE_NAME}}/{{LETTER_DATE}}
+        // are filled in by buildParkingDeptLetterModel()/the docx builder.
+        letterIntro: 'I am writing to follow up on a number of bicycle lane obstruction incidents I previously reported to the City of Detroit through the Improve Detroit system. In each case, the responding officer noted that the vehicle was gone on arrival and directed me to contact the City of Detroit Municipal Parking Department Enforcement directly, since no violation could be issued after the fact. I am providing the details below so that these recurring problem locations and vehicles can be addressed going forward.',
+        letterClosing: 'Please let me know if any additional information is needed. Thank you for your attention to these recurring obstructions.',
+        geofenceSectionIntro: 'The following incident(s) occurred at {{GEOFENCE_NAME}}:',
+        miscSectionHeading: 'Miscellaneous Parking Violations',
+        repeatOffendersSectionHeading: 'Repeat Offenders',
+        // Posted back to SeeClickFix by "Mark as Notified" -- {{LETTER_DATE}}
+        // is always the letter's own stored generation date, never the date
+        // the comment is actually posted (which may be later).
+        notifyCommentTemplate: 'Notified the City of Detroit Municipal Parking Enforcement Department about this recurring bike lane obstruction on {{LETTER_DATE}}.',
+    },
+
     // Checked once a plate is OCR'd from the photo. Each rule's `plates`
     // list is matched against the detected plate (uppercased, spaces
     // stripped). The first matching rule's `workflow` is applied on top of

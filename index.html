@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.17.0)</title>
+    <title>You Can't Park There (v3.17.1)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -37,7 +37,7 @@
          file -- bump it (matching APP_VERSION below) whenever config.js or
          this file changes, so a browser that loaded the page just before a
          deploy doesn't keep running stale config after a normal refresh. -->
-    <script src="config.js?v=3.17.0"></script>
+    <script src="config.js?v=3.17.1"></script>
     <!-- Firebase (compat build, so it works as a plain global like the rest
          of this no-build page) -- syncs submission history to Firestore. -->
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -49,6 +49,18 @@
     <!-- Leaflet for the draggable map pin fine-tuner -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
     <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- docx: generates the real .docx Parking Dept letter (Notify Parking
+         Dept screen) client-side, no build step -- exposes a global `docx`
+         object (docx.Document/Paragraph/TextRun/HeadingLevel/Packer). Not
+         independently verified live against this exact CDN path in the
+         environment this was built in (outbound network there was
+         restricted to an allowlist that didn't include cdn.jsdelivr.net) --
+         buildLetterBlob() in index.html feature-detects window.docx and
+         falls back to a Word-compatible HTML document if this script
+         failed to load, so a bad/blocked CDN degrades gracefully instead
+         of breaking the feature. Test this on a real device before relying
+         on the real-docx path. -->
+    <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js"></script>
     <style>
         /* Tailwind's preflight caps img width/height at 100%/auto, which breaks Leaflet's tile grid */
         .leaflet-container img { max-width: none !important; }
@@ -89,6 +101,9 @@
              seedStartingGeofences()/SEED_GEOFENCES below. -->
         <button id="seedGeofencesBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Seed Starting Geofences
+        </button>
+        <button id="parkingDeptMenuBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
+            Notify Parking Dept
         </button>
         <button id="releaseNotesMenuBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Release Notes
@@ -234,6 +249,75 @@
             <button id="itemFlyInCloseBtn" aria-label="Close" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark flex-shrink-0">&times;</button>
         </div>
         <div id="itemFlyInBody" class="flex flex-col gap-3 pb-8"></div>
+    </div>
+
+    <!-- Notify Parking Dept: search past submissions for the City's "car
+         gone on arrival -- contact Municipal Parking Department" reply,
+         generate a mailable .docx letter, and (as a separate step) post a
+         follow-up comment back to SeeClickFix once it's actually been
+         mailed. Same list/sub-view overlay pattern as #geofenceScreen --
+         #parkingDeptListView (search + candidate checklist + pending
+         letters) and #parkingDeptSettingsView (mailing addresses), toggled
+         via showParkingDeptList()/showParkingDeptSettings(). See
+         initGeofencesSync-style comments in the JS for the Firestore
+         collections this reads/writes (parkingDeptLetters, settings). -->
+    <div id="parkingDeptScreen" class="hidden fixed inset-0 bg-[#eef7f5] z-[55] flex flex-col p-4 overflow-y-auto">
+        <div id="parkingDeptListView">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-montserrat font-extrabold text-detroit-dark">Notify Parking Dept</h2>
+                <button id="parkingDeptCloseBtn" aria-label="Close" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark">&times;</button>
+            </div>
+
+            <button id="parkingDeptSearchBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition">
+                Search for New Candidates
+            </button>
+            <p id="parkingDeptSearchStatus" class="text-center text-xs font-medium text-slate-500 mt-2"></p>
+
+            <button id="parkingDeptSettingsBtn" class="text-xs text-detroit-teal font-semibold underline mt-3 mb-4">
+                Mailing Address Settings
+            </button>
+
+            <h3 class="text-xs font-bold text-detroit-navy uppercase mb-2 px-1">Candidates</h3>
+            <div id="parkingDeptCandidates" class="flex flex-col gap-2 mb-4"></div>
+
+            <button id="parkingDeptGenerateBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition">
+                Generate Letter
+            </button>
+            <p id="parkingDeptGenerateMsg" class="text-center text-xs font-medium mt-2 mb-4"></p>
+
+            <h3 class="text-xs font-bold text-detroit-navy uppercase mb-2 px-1">Letters Awaiting Notification</h3>
+            <div id="parkingDeptLetters" class="flex flex-col gap-2 pb-8"></div>
+        </div>
+
+        <div id="parkingDeptSettingsView" class="hidden">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-montserrat font-extrabold text-detroit-dark">Mailing Address Settings</h2>
+                <button id="parkingDeptSettingsCloseBtn" aria-label="Close" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark">&times;</button>
+            </div>
+            <div class="flex flex-col gap-3 pb-8">
+                <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Your Name</label>
+                    <input type="text" id="pdSenderName" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                </div>
+                <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Your Return Address</label>
+                    <textarea id="pdSenderAddress" rows="3" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1" placeholder="Street address&#10;City, State ZIP"></textarea>
+                </div>
+                <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Recipient Name</label>
+                    <input type="text" id="pdRecipientName" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1" placeholder="City of Detroit Municipal Parking Department Enforcement">
+                </div>
+                <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Recipient Mailing Address</label>
+                    <textarea id="pdRecipientAddress" rows="3" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1" placeholder="Street address&#10;Detroit, MI ZIP"></textarea>
+                    <p class="text-[10px] text-slate-400 mt-1">Not pre-filled -- please confirm the correct mailing address before sending. The department's phone number (313-221-2558) is already cited in every letter.</p>
+                </div>
+                <button id="pdSettingsSaveBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition mt-2">
+                    Save Settings
+                </button>
+                <p id="pdSettingsMsg" class="text-center text-xs font-medium"></p>
+            </div>
+        </div>
     </div>
 
     <!-- Release Notes: read-only, rendered from the RELEASE_NOTES const below. -->
@@ -460,7 +544,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.17.0</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.17.1</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -525,14 +609,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.17.0)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.17.1)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.17.0)...
+            App initialized (v3.17.1)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -544,13 +628,18 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.17.0';
+        const APP_VERSION = '3.17.1';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.17.1', date: '2026-08-07', notes: [
+                'Added "Notify Parking Dept" to the hamburger menu: search past submissions for the City\'s "car gone on arrival -- contact Municipal Parking Department" boilerplate reply, generate a mailable .docx letter listing the flagged incidents (grouped by geofence, with a Miscellaneous section and a duplicate Repeat Offenders roundup), and -- as a separate step, after you\'ve actually mailed it -- post a dated follow-up comment back onto each SeeClickFix issue.',
+                'Detection checks a configurable keyword list first, falling back to Gemini (once per issue, not per comment) only when nothing matches.',
+                'Mailing addresses for the letter live in a new in-app Settings view, never in config.js.',
+            ] },
             { version: '3.17.0', date: '2026-08-07', notes: [
                 'Geofence Maintenance now has a draggable map pin with a live radius circle, synced with the lat/lng/distance fields.',
                 'Geofence Maintenance now lists every incident logged at that geofence.',
@@ -731,6 +820,23 @@
         // history/plates which are only ever written by the app itself.
         function geofencesCollection(uid) {
             return firestoreDb.collection('users').doc(uid).collection('geofences');
+        }
+
+        // Municipal Parking Department letters (see the "Notify Parking
+        // Dept" screen) -- one doc per generated letter. Unlike
+        // history/plates/geofences, this and settingsCollection below don't
+        // get a permanent onSnapshot listener -- that screen is opened
+        // rarely/explicitly, so a plain .get() when it opens is simpler
+        // (see showParkingDeptList/loadParkingDeptSettings).
+        function parkingDeptLettersCollection(uid) {
+            return firestoreDb.collection('users').doc(uid).collection('parkingDeptLetters');
+        }
+
+        // User-editable settings -- currently just settings/parkingDeptLetter
+        // (sender/recipient mailing addresses). Deliberately Firestore, not
+        // config.js -- see config.js's parkingDeptLetter comment for why.
+        function settingsCollection(uid) {
+            return firestoreDb.collection('users').doc(uid).collection('settings');
         }
 
         // Resolves once the first Firestore history snapshot has arrived, so
@@ -1047,6 +1153,28 @@
             closeMenu();
             seedStartingGeofences();
         });
+
+        // Notify Parking Dept screen
+        const parkingDeptMenuBtn = document.getElementById('parkingDeptMenuBtn');
+        const parkingDeptScreen = document.getElementById('parkingDeptScreen');
+        const parkingDeptCloseBtn = document.getElementById('parkingDeptCloseBtn');
+        parkingDeptMenuBtn.addEventListener('click', () => {
+            closeMenu();
+            // Un-hide BEFORE calling showParkingDeptList() -- that in turn
+            // calls renderParkingDeptCandidates(), which now deliberately
+            // skips its work while the screen is hidden (see its comment),
+            // so un-hiding first is required for the very first render to
+            // actually happen.
+            parkingDeptScreen.classList.remove('hidden');
+            showParkingDeptList();
+            refreshParkingDeptLetters();
+        });
+        parkingDeptCloseBtn.addEventListener('click', () => parkingDeptScreen.classList.add('hidden'));
+        document.getElementById('parkingDeptSearchBtn').addEventListener('click', runParkingDeptSearch);
+        document.getElementById('parkingDeptGenerateBtn').addEventListener('click', generateParkingDeptLetter);
+        document.getElementById('parkingDeptSettingsBtn').addEventListener('click', showParkingDeptSettings);
+        document.getElementById('parkingDeptSettingsCloseBtn').addEventListener('click', showParkingDeptList);
+        document.getElementById('pdSettingsSaveBtn').addEventListener('click', saveParkingDeptSettings);
         document.getElementById('geofenceAddBtn').addEventListener('click', () => showGeofenceForm(null));
         document.getElementById('geofenceFormCloseBtn').addEventListener('click', showGeofenceList);
         document.getElementById('gfAllHours').addEventListener('change', (e) => {
@@ -1234,6 +1362,19 @@
             }
         }
         let geofencesCache = loadGeofencesFromStorage();
+
+        // Parking Dept letters (see the "Notify Parking Dept" screen) --
+        // unlike the caches above, this has no permanent onSnapshot
+        // listener/localStorage cache (that screen is opened rarely; see
+        // refreshParkingDeptLetters), just a plain in-memory array
+        // refreshed on demand. Declared here rather than down with the
+        // rest of that screen's code because renderHistory() ->
+        // renderParkingDeptCandidates() -> renderParkingDeptLettersList()
+        // reads it, and renderHistory() runs unconditionally near the top
+        // of this script on every page load -- a `let` declared later
+        // would still be in its temporal dead zone at that point and throw,
+        // breaking the entire app on load, not just this screen.
+        let parkingDeptLettersCache = [];
 
         // Declared here (well before renderStats, which is the only place
         // that uses it) rather than down in the Stats-tab section it
@@ -2975,6 +3116,7 @@
             }
             renderOffenders();
             renderStats();
+            renderParkingDeptCandidates();
         }
 
         // Opens a submitted report's compact history card into the shared
@@ -3446,6 +3588,793 @@
                 logToConsole(`Issue #${entry.issueId} status: ${status}`);
             } catch (err) {
                 logToConsole(err, true);
+            }
+        }
+
+        // ==========================================
+        // Notify Parking Dept (hamburger menu)
+        // ==========================================
+        // Search past submissions for the City's boilerplate "car gone on
+        // arrival -- contact Municipal Parking Department" reply, generate
+        // a mailable .docx letter, and (as an explicit separate step, only
+        // after the letter is actually mailed) post a follow-up comment
+        // back onto each SeeClickFix issue. See config.js's
+        // parkingDeptLetter block for the wording/policy this reads, and
+        // firestore.rules for the parkingDeptLetters/settings collections.
+        //
+        // Neither of the two endpoints below (comment listing/posting) nor
+        // the docx CDN script tag in <head> could be verified against a
+        // live target in the environment this was built in (outbound
+        // network there was restricted to an allowlist that didn't
+        // include seeclickfix.com or cdn.jsdelivr.net) -- both are written
+        // defensively (normalizeComment() tries several plausible field
+        // names and logs the raw shape once; buildAndDownloadParkingDeptLetter
+        // feature-detects window.docx and falls back to a Word-compatible
+        // HTML document) but should be smoke-tested on a real device
+        // before relying on this at scale.
+
+        // --- SeeClickFix comment fetch/post -------------------------------
+
+        // Logged once so the real field names can be confirmed/corrected
+        // quickly if they differ from the guesses in normalizeComment().
+        let commentsShapeLogged = false;
+
+        async function fetchIssueCommentsPage(issueId, page = 1, perPage = 100) {
+            const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}/comments?page=${page}&per_page=${perPage}`;
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+            const response = await fetch(proxyUrl, {
+                headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` }
+            });
+            if (!response.ok) {
+                throw new Error(`Comments fetch failed: ${response.status}`);
+            }
+            const data = await response.json();
+            if (!commentsShapeLogged) {
+                commentsShapeLogged = true;
+                logToConsole(`[comments] Raw response shape for issue #${issueId} (first page, truncated): ${JSON.stringify(data).slice(0, 1000)}`);
+            }
+            return data;
+        }
+
+        let commentFieldWarningLogged = false;
+
+        // Comment objects' exact field names weren't independently
+        // confirmed against a live response before shipping -- try a few
+        // plausible ones rather than assuming, and log once (not per
+        // comment) if none matched, so a silent empty-text bug doesn't
+        // hide a real match.
+        function normalizeComment(raw) {
+            const text = raw.comment ?? raw.text ?? raw.body ?? raw.message ?? '';
+            const createdAt = raw.created_at ?? raw.createdAt ?? raw.updated_at ?? null;
+            if (!text && !commentFieldWarningLogged) {
+                commentFieldWarningLogged = true;
+                logToConsole(`[comments] Could not find comment text in a known field -- raw object: ${JSON.stringify(raw).slice(0, 500)}`, true);
+            }
+            return { id: raw.id ?? null, text: String(text), createdAt, raw };
+        }
+
+        // Pages through an issue's comments (SeeClickFix v2 paginates via
+        // page/per_page), hard-capped at 10 pages (1000 comments at the
+        // default per_page) so an unexpected pagination/field-name shape
+        // can't loop forever.
+        async function fetchAllIssueComments(issueId) {
+            const comments = [];
+            for (let page = 1; page <= 10; page++) {
+                const data = await fetchIssueCommentsPage(issueId, page);
+                const pageComments = Array.isArray(data) ? data : (data.comments || data.data || []);
+                if (pageComments.length === 0) break;
+                comments.push(...pageComments.map(normalizeComment));
+                if (pageComments.length < 100) break; // short page -- last one
+            }
+            return comments;
+        }
+
+        async function postIssueComment(issueId, commentText) {
+            const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}/comments`;
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+            const response = await fetch(proxyUrl, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${CONFIG.seeClickFix.token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ comment: commentText }),
+            });
+            if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(`Comment post failed (${response.status}): ${errText}`);
+            }
+            return response.json();
+        }
+
+        // --- Detection: keyword first, Gemini fallback once per issue -----
+
+        function commentMatchesParkingDeptBoilerplate(text) {
+            const lower = String(text || '').toLowerCase();
+            return CONFIG.parkingDeptLetter.keywordTriggers.some((phrase) => lower.includes(phrase.toLowerCase()));
+        }
+
+        // Text-only Gemini call (no image), modeled on classifyPhotoWithGemini
+        // but FAILS CLOSED (false) on any error -- the opposite of that
+        // function's fail-open default, deliberately: a missed detection
+        // here just waits for the next Search run, but a false positive
+        // risks citing a wrong incident in a letter mailed to a government
+        // office.
+        async function classifyCommentWithGemini(commentTexts) {
+            try {
+                await geminiKeyReady;
+                if (!CONFIG.geminiApiKey) {
+                    throw new Error('Gemini API key not available (Firestore config/secrets doc missing, empty, or unreadable)');
+                }
+                const model = 'gemini-flash-latest';
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${CONFIG.geminiApiKey}`;
+                const prompt = 'You are looking at comments left by City of Detroit staff/police on a bike-lane obstruction '
+                    + 'report. Determine whether any of them mean: the responding officer found no vehicle/violation present '
+                    + '(e.g. "car gone on arrival") and is directing the reporter to contact the City of Detroit Municipal '
+                    + 'Parking Department Enforcement directly, since the police response alone did not result in a ticket. '
+                    + 'Respond with ONLY a JSON object, no other text, in exactly this shape: '
+                    + '{"isParkingDeptReferral": boolean}. Comments (newest first): ' + JSON.stringify(commentTexts);
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: prompt }] }],
+                        generationConfig: { responseMimeType: 'application/json' },
+                    }),
+                });
+                if (!response.ok) {
+                    const errText = await response.text();
+                    throw new Error(`Gemini API Error ${response.status}: ${errText}`);
+                }
+                const data = await response.json();
+                const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!text) throw new Error('Gemini returned no content');
+                const result = JSON.parse(text);
+                return !!result.isParkingDeptReferral;
+            } catch (err) {
+                logToConsole(`Gemini comment classification failed, treating as no match: ${err instanceof Error ? err.message : err}`, true);
+                return false;
+            }
+        }
+
+        // Checks all of an issue's comments by keyword first (cheap, no API
+        // call); only if NONE match does this fall back to a single Gemini
+        // call for that issue (last 5 comments, newest-first, to bound
+        // tokens) -- never a Gemini call per comment.
+        async function issueHasParkingDeptReferral(comments) {
+            for (const comment of comments) {
+                if (commentMatchesParkingDeptBoilerplate(comment.text)) {
+                    return { matched: true, method: 'keyword' };
+                }
+            }
+            if (comments.length === 0) return { matched: false, method: null };
+            const recentTexts = comments
+                .slice()
+                .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+                .slice(0, 5)
+                .map((c) => c.text)
+                .filter(Boolean);
+            if (recentTexts.length === 0) return { matched: false, method: null };
+            const matched = await classifyCommentWithGemini(recentTexts);
+            return { matched, method: matched ? 'gemini' : null };
+        }
+
+        // --- Search orchestration ------------------------------------------
+
+        // Scans up to `limit` not-yet-flagged/lettered/notified/dismissed,
+        // non-suppressed issues (suppressed reports never got a real
+        // SeeClickFix ticket -- nothing to fetch comments from), oldest-
+        // checked-first, sequentially (not parallel -- keeps the debug
+        // console legible and avoids hammering the shared free corsproxy.io
+        // proxy every other SeeClickFix call in this app depends on). Each
+        // issue is wrapped in its own try/catch so one bad ticket doesn't
+        // abort the run.
+        async function searchParkingDeptCandidates(limit) {
+            limit = limit || CONFIG.parkingDeptLetter.searchCapPerRun;
+            const statusEl = document.getElementById('parkingDeptSearchStatus');
+            const uid = currentUid || await historySignedIn;
+            const candidates = historyCache
+                .filter((entry) => !entry.suppressed && !['flagged', 'lettered', 'notified', 'dismissed'].includes(entry.parkingDeptFlag))
+                .slice()
+                .sort((a, b) => new Date(a.parkingDeptLastCheckedAt || 0) - new Date(b.parkingDeptLastCheckedAt || 0))
+                .slice(0, limit);
+
+            if (candidates.length === 0) {
+                logToConsole('Parking Dept search: no unchecked issues left to scan.');
+                return { checked: 0, flagged: 0 };
+            }
+
+            let flaggedCount = 0;
+            for (let i = 0; i < candidates.length; i++) {
+                const entry = candidates[i];
+                if (statusEl) statusEl.textContent = `Checking ${i + 1} of ${candidates.length} (#${entry.issueId})...`;
+                try {
+                    const comments = await fetchAllIssueComments(entry.issueId);
+                    const { matched, method } = await issueHasParkingDeptReferral(comments);
+                    const now = new Date().toISOString();
+                    if (matched) {
+                        await historyCollection(uid).doc(String(entry.issueId)).update({
+                            parkingDeptFlag: 'flagged',
+                            parkingDeptFlaggedAt: now,
+                            parkingDeptMatchMethod: method,
+                            parkingDeptLastCheckedAt: now,
+                        });
+                        flaggedCount++;
+                        logToConsole(`[parking dept] Issue #${entry.issueId} flagged (${method} match).`);
+                    } else {
+                        await historyCollection(uid).doc(String(entry.issueId)).update({ parkingDeptLastCheckedAt: now });
+                    }
+                } catch (err) {
+                    logToConsole(`[parking dept] Could not check issue #${entry.issueId}: ${err instanceof Error ? err.message : err}`, true);
+                }
+            }
+            logToConsole(`Parking Dept search complete: ${candidates.length} checked, ${flaggedCount} newly flagged.`);
+            return { checked: candidates.length, flagged: flaggedCount };
+        }
+
+        async function runParkingDeptSearch() {
+            const btn = document.getElementById('parkingDeptSearchBtn');
+            const status = document.getElementById('parkingDeptSearchStatus');
+            btn.disabled = true;
+            try {
+                const { checked, flagged } = await searchParkingDeptCandidates();
+                status.textContent = checked === 0
+                    ? 'No new issues to check.'
+                    : `Checked ${checked} issue(s), found ${flagged} new match(es).`;
+            } catch (err) {
+                status.textContent = 'Search failed -- check debug console.';
+                logToConsole(`Parking Dept search failed: ${err instanceof Error ? err.message : err}`, true);
+            }
+            btn.disabled = false;
+        }
+
+        // --- Letter grouping (pure) and rendering (docx / HTML fallback) --
+
+        const DEFAULT_PARKING_DEPT_RECIPIENT_NAME = 'City of Detroit Municipal Parking Department Enforcement';
+
+        // Pure -- no DOM/Firestore/fetch. Groups a set of flagged history
+        // entries into geofence sections + a misc bucket + a duplicate
+        // "repeat offenders" roundup, exactly matching the letter's
+        // structure. Omits empty buckets entirely.
+        function buildParkingDeptLetterModel(entries) {
+            const geofenceMap = new Map(); // geofenceId -> issueId[]
+            const misc = [];
+            for (const entry of entries) {
+                if (entry.geofenceId) {
+                    if (!geofenceMap.has(entry.geofenceId)) geofenceMap.set(entry.geofenceId, []);
+                    geofenceMap.get(entry.geofenceId).push(entry.issueId);
+                } else {
+                    misc.push(entry.issueId);
+                }
+            }
+            const geofenceGroups = [...geofenceMap.entries()]
+                .map(([geofenceId, issueIds]) => {
+                    const geofence = geofencesCache.find((g) => g.id === geofenceId);
+                    return { geofenceId, name: geofence ? geofence.name : `Unknown Geofence (${geofenceId})`, issueIds };
+                })
+                .sort((a, b) => a.name.localeCompare(b.name));
+
+            // Repeat offenders: among the selection, any plate with 2+
+            // TOTAL lifetime incidents Detroit actually has on file --
+            // getPriorComplaintsForPlate already excludes suppressed
+            // entries; incidentIdsForPlate does NOT, so using that instead
+            // would let a locally-suppressed, never-actually-reported
+            // incident wrongly count toward a threshold Detroit has no
+            // record of.
+            const plateMap = new Map(); // plate -> issueId[] (within this selection only)
+            for (const entry of entries) {
+                for (const plate of platesFromEntry(entry)) {
+                    if (getPriorComplaintsForPlate(plate).length < 2) continue;
+                    if (!plateMap.has(plate)) plateMap.set(plate, []);
+                    if (!plateMap.get(plate).includes(entry.issueId)) plateMap.get(plate).push(entry.issueId);
+                }
+            }
+            const repeatOffenders = [...plateMap.entries()]
+                .map(([plate, issueIds]) => ({ plate, issueIds }))
+                .sort((a, b) => b.issueIds.length - a.issueIds.length);
+
+            return { geofenceGroups, misc, repeatOffenders };
+        }
+
+        function formatParkingDeptLetterBullet(issueId) {
+            const entry = historyCache.find((e) => e.issueId === issueId);
+            const dateStr = entry ? new Date(entry.submittedAt).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '';
+            const address = entry ? entry.address : '';
+            return `Issue #${issueId}${address ? ` -- ${address}` : ''}${dateStr ? ` (reported ${dateStr})` : ''}`;
+        }
+
+        async function buildLetterDocxBlob(model, settings, generatedAtDisplay) {
+            const { Document, Paragraph, TextRun, HeadingLevel, Packer } = window.docx;
+            const P = CONFIG.parkingDeptLetter;
+            const children = [];
+
+            if (settings.senderName) children.push(new Paragraph({ text: settings.senderName }));
+            for (const line of (settings.senderAddressLines || '').split('\n').filter(Boolean)) {
+                children.push(new Paragraph({ text: line }));
+            }
+            children.push(new Paragraph({ text: '' }));
+            children.push(new Paragraph({ text: generatedAtDisplay }));
+            children.push(new Paragraph({ text: '' }));
+            children.push(new Paragraph({ text: settings.recipientName || DEFAULT_PARKING_DEPT_RECIPIENT_NAME }));
+            for (const line of (settings.recipientAddressLines || '').split('\n').filter(Boolean)) {
+                children.push(new Paragraph({ text: line }));
+            }
+            children.push(new Paragraph({ text: `Phone: ${P.parkingDeptPhone}` }));
+            children.push(new Paragraph({ text: '' }));
+            children.push(new Paragraph({ text: P.letterIntro }));
+            children.push(new Paragraph({ text: '' }));
+
+            for (const group of model.geofenceGroups) {
+                children.push(new Paragraph({ text: group.name, heading: HeadingLevel.HEADING_2 }));
+                children.push(new Paragraph({ text: P.geofenceSectionIntro.replace(/\{\{GEOFENCE_NAME\}\}/g, group.name) }));
+                for (const issueId of group.issueIds) {
+                    children.push(new Paragraph({ text: formatParkingDeptLetterBullet(issueId), bullet: { level: 0 } }));
+                }
+                children.push(new Paragraph({ text: '' }));
+            }
+
+            if (model.misc.length > 0) {
+                children.push(new Paragraph({ text: P.miscSectionHeading, heading: HeadingLevel.HEADING_2 }));
+                for (const issueId of model.misc) {
+                    children.push(new Paragraph({ text: formatParkingDeptLetterBullet(issueId), bullet: { level: 0 } }));
+                }
+                children.push(new Paragraph({ text: '' }));
+            }
+
+            if (model.repeatOffenders.length > 0) {
+                children.push(new Paragraph({ text: P.repeatOffendersSectionHeading, heading: HeadingLevel.HEADING_2 }));
+                for (const { plate, issueIds } of model.repeatOffenders) {
+                    children.push(new Paragraph({ children: [new TextRun({ text: `Plate ${plate}`, bold: true })] }));
+                    for (const issueId of issueIds) {
+                        children.push(new Paragraph({ text: formatParkingDeptLetterBullet(issueId), bullet: { level: 0 } }));
+                    }
+                }
+                children.push(new Paragraph({ text: '' }));
+            }
+
+            children.push(new Paragraph({ text: P.letterClosing }));
+            children.push(new Paragraph({ text: '' }));
+            children.push(new Paragraph({ text: 'Sincerely,' }));
+            children.push(new Paragraph({ text: settings.senderName || '' }));
+
+            const doc = new Document({ sections: [{ children }] });
+            return Packer.toBlob(doc);
+        }
+
+        // Word-compatible HTML fallback (a .doc, not real OOXML, but Word
+        // opens it fine) -- used when window.docx didn't load (blocked/slow
+        // CDN) or the real docx build threw. Same content/structure as
+        // buildLetterDocxBlob.
+        function buildLetterHtmlDocBlob(model, settings, generatedAtDisplay) {
+            const P = CONFIG.parkingDeptLetter;
+            const addressLines = (lines) => (lines || '').split('\n').filter(Boolean).map((l) => `<p>${escapeHtml(l)}</p>`).join('');
+            const bulletList = (issueIds) => `<ul>${issueIds.map((id) => `<li>${escapeHtml(formatParkingDeptLetterBullet(id))}</li>`).join('')}</ul>`;
+
+            let body = `
+                ${settings.senderName ? `<p>${escapeHtml(settings.senderName)}</p>` : ''}
+                ${addressLines(settings.senderAddressLines)}
+                <p>&nbsp;</p>
+                <p>${escapeHtml(generatedAtDisplay)}</p>
+                <p>&nbsp;</p>
+                <p>${escapeHtml(settings.recipientName || DEFAULT_PARKING_DEPT_RECIPIENT_NAME)}</p>
+                ${addressLines(settings.recipientAddressLines)}
+                <p>Phone: ${escapeHtml(P.parkingDeptPhone)}</p>
+                <p>&nbsp;</p>
+                <p>${escapeHtml(P.letterIntro)}</p>
+            `;
+            for (const group of model.geofenceGroups) {
+                body += `<h2>${escapeHtml(group.name)}</h2><p>${escapeHtml(P.geofenceSectionIntro.replace(/\{\{GEOFENCE_NAME\}\}/g, group.name))}</p>${bulletList(group.issueIds)}`;
+            }
+            if (model.misc.length > 0) {
+                body += `<h2>${escapeHtml(P.miscSectionHeading)}</h2>${bulletList(model.misc)}`;
+            }
+            if (model.repeatOffenders.length > 0) {
+                body += `<h2>${escapeHtml(P.repeatOffendersSectionHeading)}</h2>`;
+                for (const { plate, issueIds } of model.repeatOffenders) {
+                    body += `<p><b>Plate ${escapeHtml(plate)}</b></p>${bulletList(issueIds)}`;
+                }
+            }
+            body += `<p>${escapeHtml(P.letterClosing)}</p><p>Sincerely,</p><p>${escapeHtml(settings.senderName || '')}</p>`;
+
+            const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"></head><body>${body}</body></html>`;
+            return new Blob([html], { type: 'application/msword' });
+        }
+
+        // No Blob-download pattern exists anywhere else in this app (photos
+        // only ever upload) -- this is new plumbing.
+        function downloadBlob(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+        }
+
+        // Feature-detects window.docx at call time (not a try/catch around
+        // the whole flow) -- a blocked/slow CDN just leaves window.docx
+        // undefined rather than throwing, and a real docx build error
+        // should also fall back rather than fail the whole letter.
+        async function buildAndDownloadParkingDeptLetter(model, settings, generatedAtDisplay) {
+            let blob = null;
+            let filename;
+            if (window.docx && window.docx.Packer) {
+                try {
+                    blob = await buildLetterDocxBlob(model, settings, generatedAtDisplay);
+                    filename = `Parking-Dept-Letter-${generatedAtDisplay.replace(/[, ]+/g, '-')}.docx`;
+                } catch (err) {
+                    logToConsole(`docx generation failed, falling back to a Word-compatible HTML document: ${err instanceof Error ? err.message : err}`, true);
+                }
+            } else {
+                logToConsole('docx library not available (CDN may not have loaded) -- falling back to a Word-compatible HTML document.', true);
+            }
+            if (!blob) {
+                blob = buildLetterHtmlDocBlob(model, settings, generatedAtDisplay);
+                filename = `Parking-Dept-Letter-${generatedAtDisplay.replace(/[, ]+/g, '-')}.doc`;
+            }
+            downloadBlob(blob, filename);
+            return filename;
+        }
+
+        // --- Mailing address settings (Firestore, never config.js) --------
+
+        async function loadParkingDeptSettings() {
+            try {
+                const uid = currentUid || await historySignedIn;
+                const doc = await settingsCollection(uid).doc('parkingDeptLetter').get();
+                return doc.exists ? doc.data() : {};
+            } catch (err) {
+                logToConsole(`Could not load mailing address settings: ${err instanceof Error ? err.message : err}`, true);
+                return {};
+            }
+        }
+
+        async function saveParkingDeptSettings() {
+            const msg = document.getElementById('pdSettingsMsg');
+            const settings = {
+                senderName: document.getElementById('pdSenderName').value.trim(),
+                senderAddressLines: document.getElementById('pdSenderAddress').value.trim(),
+                recipientName: document.getElementById('pdRecipientName').value.trim(),
+                recipientAddressLines: document.getElementById('pdRecipientAddress').value.trim(),
+            };
+            msg.textContent = 'Saving...';
+            msg.className = 'text-center text-xs font-medium text-detroit-teal';
+            try {
+                const uid = currentUid || await historySignedIn;
+                await settingsCollection(uid).doc('parkingDeptLetter').set(settings, { merge: true });
+                msg.textContent = 'Saved.';
+                msg.className = 'text-center text-xs font-medium text-detroit-dark';
+                setTimeout(() => { msg.textContent = ''; }, 2000);
+            } catch (err) {
+                msg.textContent = 'Could not save -- check debug console.';
+                msg.className = 'text-center text-xs font-medium text-red-600';
+                logToConsole(`Could not save mailing address settings: ${err instanceof Error ? err.message : err}`, true);
+            }
+        }
+
+        async function showParkingDeptSettings() {
+            document.getElementById('parkingDeptListView').classList.add('hidden');
+            document.getElementById('parkingDeptSettingsView').classList.remove('hidden');
+            document.getElementById('pdSettingsMsg').textContent = '';
+            const settings = await loadParkingDeptSettings();
+            document.getElementById('pdSenderName').value = settings.senderName || '';
+            document.getElementById('pdSenderAddress').value = settings.senderAddressLines || '';
+            document.getElementById('pdRecipientName').value = settings.recipientName || '';
+            document.getElementById('pdRecipientAddress').value = settings.recipientAddressLines || '';
+        }
+
+        function showParkingDeptList() {
+            document.getElementById('parkingDeptSettingsView').classList.add('hidden');
+            document.getElementById('parkingDeptListView').classList.remove('hidden');
+            renderParkingDeptCandidates();
+        }
+
+        // --- Candidate checklist (driven by the existing history listener) -
+
+        function getSelectedParkingDeptIssueIds() {
+            return Array.from(document.querySelectorAll('#parkingDeptCandidates input[type="checkbox"]:checked'))
+                .map((cb) => cb.dataset.issueId);
+        }
+
+        // Called from the end of renderHistory() (alongside
+        // renderOffenders/renderStats), not a separate listener -- the
+        // existing history onSnapshot already covers every change Search/
+        // Dismiss/Generate make. renderHistory() fires on every history
+        // change app-wide (e.g. once per issue Search touches), so this
+        // skips its work entirely while the screen is hidden -- doing the
+        // geofence/repeat-offender grouping on every unrelated report
+        // submission would be pure waste. showParkingDeptList() calls this
+        // directly when the screen opens, so it's always fresh at that
+        // point regardless.
+        function renderParkingDeptCandidates() {
+            const container = document.getElementById('parkingDeptCandidates');
+            const screen = document.getElementById('parkingDeptScreen');
+            if (!container || !screen || screen.classList.contains('hidden')) return;
+
+            // Preserve any manual unchecks across re-renders -- this can
+            // run mid-Search (each issue Search touches fires the history
+            // listener), so naively defaulting every box back to checked
+            // would silently re-include an issue the user just excluded.
+            const uncheckedIds = new Set(
+                Array.from(container.querySelectorAll('input[type="checkbox"]:not(:checked)')).map((cb) => cb.dataset.issueId)
+            );
+
+            const flagged = historyCache.filter((e) => e.parkingDeptFlag === 'flagged');
+            if (flagged.length === 0) {
+                container.innerHTML = '<p class="text-xs text-slate-400 px-1">No flagged issues yet -- tap Search above.</p>';
+            } else {
+                const model = buildParkingDeptLetterModel(flagged);
+                const sections = [
+                    ...model.geofenceGroups.map((g) => ({ heading: g.name, issueIds: g.issueIds })),
+                    ...(model.misc.length > 0 ? [{ heading: CONFIG.parkingDeptLetter.miscSectionHeading, issueIds: model.misc }] : []),
+                ];
+                container.innerHTML = sections.map((section) => `
+                    <div class="bg-white rounded-lg shadow-sm p-3">
+                        <p class="text-xs font-bold text-detroit-navy uppercase mb-1">${escapeHtml(section.heading)}</p>
+                        ${section.issueIds.map((issueId) => {
+                            const entry = historyCache.find((e) => e.issueId === issueId);
+                            const isChecked = !uncheckedIds.has(String(issueId));
+                            return `
+                                <label class="flex items-start gap-2 text-xs text-detroit-dark py-1">
+                                    <input type="checkbox" data-issue-id="${escapeHtml(String(issueId))}" ${isChecked ? 'checked' : ''} class="mt-0.5">
+                                    <span class="flex-1">#${escapeHtml(String(issueId))}${entry && entry.address ? ` -- ${escapeHtml(entry.address)}` : ''}</span>
+                                    <button type="button" class="text-slate-400 hover:text-red-600 flex-shrink-0" onclick="dismissParkingDeptCandidate('${escapeHtml(String(issueId))}')">Dismiss</button>
+                                </label>
+                            `;
+                        }).join('')}
+                    </div>
+                `).join('');
+            }
+
+            const generateBtn = document.getElementById('parkingDeptGenerateBtn');
+            if (generateBtn) {
+                generateBtn.textContent = flagged.length > 0 ? `Generate Letter (${flagged.length})` : 'Generate Letter';
+            }
+
+            renderParkingDeptLettersList();
+        }
+
+        async function dismissParkingDeptCandidate(issueId) {
+            const entry = historyCache.find((e) => String(e.issueId) === String(issueId));
+            if (!entry) return;
+            if (!confirm(`Dismiss issue #${issueId} as a false match? It won't be suggested again.`)) return;
+            try {
+                const uid = currentUid || await historySignedIn;
+                await historyCollection(uid).doc(String(issueId)).update({ parkingDeptFlag: 'dismissed' });
+                logToConsole(`Dismissed issue #${issueId} from Parking Dept candidates.`);
+            } catch (err) {
+                logToConsole(`Could not dismiss issue #${issueId}: ${err instanceof Error ? err.message : err}`, true);
+            }
+        }
+
+        // --- Generate letter -------------------------------------------------
+
+        async function generateParkingDeptLetter() {
+            const msg = document.getElementById('parkingDeptGenerateMsg');
+            const selectedIds = getSelectedParkingDeptIssueIds();
+            if (selectedIds.length === 0) {
+                msg.textContent = 'Select at least one issue first.';
+                msg.className = 'text-center text-xs font-medium text-red-600';
+                return;
+            }
+
+            const settings = await loadParkingDeptSettings();
+            if (!settings.senderName || !settings.senderAddressLines || !settings.recipientAddressLines) {
+                msg.textContent = 'Please fill in your mailing address settings first.';
+                msg.className = 'text-center text-xs font-medium text-red-600';
+                showParkingDeptSettings();
+                return;
+            }
+
+            const entries = selectedIds.map((id) => historyCache.find((e) => String(e.issueId) === String(id))).filter(Boolean);
+            const model = buildParkingDeptLetterModel(entries);
+            const generatedAt = new Date();
+            const generatedAtDisplay = generatedAt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+            msg.textContent = 'Building letter...';
+            msg.className = 'text-center text-xs font-medium text-detroit-teal';
+
+            let filename;
+            try {
+                filename = await buildAndDownloadParkingDeptLetter(model, settings, generatedAtDisplay);
+            } catch (err) {
+                msg.textContent = 'Could not build the letter -- check debug console.';
+                msg.className = 'text-center text-xs font-medium text-red-600';
+                logToConsole(`Could not build Parking Dept letter: ${err instanceof Error ? err.message : err}`, true);
+                return; // nothing marked as lettered yet -- safe to just retry
+            }
+
+            // Only after the download actually happened do we record the
+            // letter and flip issues to 'lettered' -- a failed download
+            // must never leave issues stuck in a state that hides them
+            // from a retry (same discipline as submitItem never marking
+            // success before SeeClickFix actually confirms it).
+            try {
+                const uid = currentUid || await historySignedIn;
+                const letterRef = parkingDeptLettersCollection(uid).doc();
+                const issueIds = entries.map((e) => e.issueId);
+                await letterRef.set({
+                    generatedAt: generatedAt.toISOString(),
+                    generatedAtDisplay,
+                    issueIds,
+                    status: 'generated',
+                    notifiedAt: null,
+                });
+                const batch = firestoreDb.batch();
+                for (const issueId of issueIds) {
+                    batch.update(historyCollection(uid).doc(String(issueId)), {
+                        parkingDeptFlag: 'lettered',
+                        parkingDeptLetterId: letterRef.id,
+                    });
+                }
+                await batch.commit();
+                await refreshParkingDeptLetters();
+                msg.textContent = `Downloaded ${filename}. Mail it, then come back and tap "Mark as Notified" once it's sent.`;
+                msg.className = 'text-center text-xs font-bold text-detroit-dark';
+            } catch (err) {
+                msg.textContent = `Downloaded ${filename}, but could not save the letter record -- check debug console.`;
+                msg.className = 'text-center text-xs font-medium text-red-600';
+                logToConsole(`Downloaded the letter but could not write Firestore records: ${err instanceof Error ? err.message : err}`, true);
+            }
+        }
+
+        // --- Pending letters: notify / discard / re-download ----------------
+
+        // parkingDeptLettersCache itself is declared much earlier (with
+        // historyCache/platesCache/geofencesCache) -- see that comment for
+        // why. No permanent onSnapshot listener for parkingDeptLetters
+        // (see the collection helper's comment) -- refreshed explicitly on
+        // screen open and after any action that changes a letter.
+        async function refreshParkingDeptLetters() {
+            try {
+                const uid = currentUid || await historySignedIn;
+                const snapshot = await parkingDeptLettersCollection(uid).get();
+                parkingDeptLettersCache = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+            } catch (err) {
+                logToConsole(`Could not load Parking Dept letters: ${err instanceof Error ? err.message : err}`, true);
+            }
+            renderParkingDeptLettersList();
+        }
+
+        function renderParkingDeptLettersList() {
+            const container = document.getElementById('parkingDeptLetters');
+            if (!container) return;
+            const pending = parkingDeptLettersCache.filter((l) => l.status !== 'notified');
+            if (pending.length === 0) {
+                container.innerHTML = '<p class="text-xs text-slate-400 px-1">No letters awaiting notification.</p>';
+                return;
+            }
+            container.innerHTML = pending.map((letter) => {
+                const remaining = historyCache.filter((e) => e.parkingDeptLetterId === letter.id && e.parkingDeptFlag === 'lettered').length;
+                const notifiedCount = letter.issueIds.length - remaining;
+                return `
+                    <div class="bg-white rounded-lg shadow-sm p-3">
+                        <p class="text-sm font-semibold text-detroit-dark">${escapeHtml(letter.generatedAtDisplay)} &middot; ${letter.issueIds.length} incident${letter.issueIds.length === 1 ? '' : 's'}</p>
+                        <p class="text-[10px] text-slate-400 mb-2">${notifiedCount > 0 ? `${notifiedCount} of ${letter.issueIds.length} notified so far` : 'Not yet notified'}</p>
+                        <div class="flex gap-2">
+                            <button class="flex-1 text-xs bg-detroit-teal text-white font-semibold py-2 rounded-lg" onclick="markParkingDeptLetterNotified('${letter.id}')">Mark as Notified</button>
+                            <button class="flex-1 text-xs bg-white border border-detroit-mint text-detroit-navy font-semibold py-2 rounded-lg" onclick="downloadParkingDeptLetterAgain('${letter.id}')">Download Again</button>
+                        </div>
+                        <button class="w-full text-xs text-red-600 font-semibold mt-2" onclick="discardParkingDeptLetter('${letter.id}')">Discard Letter</button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Tracks issue ids that DEFINITELY got a real SeeClickFix comment
+        // posted this page session, even if the Firestore write recording
+        // that afterward failed -- without this, a retry after a
+        // post-succeeded-but-write-failed hiccup would post a SECOND
+        // duplicate "notified" comment to the same live, government-facing
+        // ticket. Known residual limitation: this is session-scoped (an
+        // in-memory Set, not persisted), so a page reload between those
+        // two steps could still in theory cause one duplicate -- there's
+        // no idempotency key support on SeeClickFix's side to close that
+        // gap fully.
+        const parkingDeptPostedThisSession = new Set();
+
+        // Re-derives the still-'lettered' subset from LIVE historyCache
+        // (not the letter doc's static issueIds) so a partial failure is
+        // naturally resumable -- already-'notified' issues are simply
+        // skipped on retry. Cites the letter's stored generatedAtDisplay,
+        // never a freshly-recomputed date, so it always matches what was
+        // printed on the physical letter even if this runs days later.
+        async function markParkingDeptLetterNotified(letterId) {
+            const letter = parkingDeptLettersCache.find((l) => l.id === letterId);
+            if (!letter) return;
+            const pendingEntries = historyCache.filter((e) => letter.issueIds.includes(e.issueId) && e.parkingDeptFlag === 'lettered');
+            if (pendingEntries.length === 0) {
+                logToConsole(`Letter ${letterId}: nothing left to notify (already done).`);
+                await refreshParkingDeptLetters();
+                return;
+            }
+            if (!confirm(`Post a "notified on ${letter.generatedAtDisplay}" comment to ${pendingEntries.length} SeeClickFix issue(s)? This can't be undone.`)) return;
+
+            const uid = currentUid || await historySignedIn;
+            const commentText = CONFIG.parkingDeptLetter.notifyCommentTemplate.replace(/\{\{LETTER_DATE\}\}/g, letter.generatedAtDisplay);
+            let succeeded = 0;
+            for (const entry of pendingEntries) {
+                const issueKey = String(entry.issueId);
+                let posted = parkingDeptPostedThisSession.has(issueKey);
+                if (!posted) {
+                    try {
+                        await postIssueComment(entry.issueId, commentText);
+                        posted = true;
+                        parkingDeptPostedThisSession.add(issueKey);
+                        logToConsole(`Posted notification comment to issue #${entry.issueId}.`);
+                    } catch (err) {
+                        logToConsole(`Could not post notification comment to issue #${entry.issueId}: ${err instanceof Error ? err.message : err}`, true);
+                        continue; // never posted -- fully safe to retry from scratch
+                    }
+                } else {
+                    logToConsole(`Issue #${entry.issueId} was already posted earlier this session -- retrying only the Firestore record, not re-posting the comment.`);
+                }
+                // The comment DID go out (this run or a prior one this
+                // session) -- a failure here must never cause a retry to
+                // post it again, so it's tracked in parkingDeptPostedThisSession
+                // above regardless of what happens next.
+                try {
+                    await historyCollection(uid).doc(String(entry.issueId)).update({
+                        parkingDeptFlag: 'notified',
+                        parkingDeptNotifiedAt: new Date().toISOString(),
+                    });
+                    succeeded++;
+                } catch (err) {
+                    logToConsole(`Posted the comment for issue #${entry.issueId}, but could not record it in Firestore -- it will keep showing as pending until this succeeds. Retrying "Mark as Notified" will NOT post a duplicate comment: ${err instanceof Error ? err.message : err}`, true);
+                }
+            }
+
+            const stillPending = pendingEntries.length - succeeded;
+            if (stillPending === 0) {
+                try {
+                    await parkingDeptLettersCollection(uid).doc(letterId).update({ status: 'notified', notifiedAt: new Date().toISOString() });
+                } catch (err) {
+                    logToConsole(`Could not update letter record status: ${err instanceof Error ? err.message : err}`, true);
+                }
+            }
+            logToConsole(`Letter ${letterId}: ${succeeded} of ${pendingEntries.length} notified this run${stillPending > 0 ? ` (${stillPending} still pending -- tap Mark as Notified again to retry)` : ''}.`);
+            await refreshParkingDeptLetters();
+        }
+
+        async function discardParkingDeptLetter(letterId) {
+            const letter = parkingDeptLettersCache.find((l) => l.id === letterId);
+            if (!letter) return;
+            if (!confirm(`Discard this letter? Its ${letter.issueIds.length} incident(s) will go back to being available for a new letter. This does NOT undo anything already mailed or notified.`)) return;
+            try {
+                const uid = currentUid || await historySignedIn;
+                const stillLettered = historyCache.filter((e) => letter.issueIds.includes(e.issueId) && e.parkingDeptFlag === 'lettered');
+                const batch = firestoreDb.batch();
+                for (const entry of stillLettered) {
+                    batch.update(historyCollection(uid).doc(String(entry.issueId)), {
+                        parkingDeptFlag: 'flagged',
+                        parkingDeptLetterId: null,
+                    });
+                }
+                batch.delete(parkingDeptLettersCollection(uid).doc(letterId));
+                await batch.commit();
+                logToConsole(`Discarded letter ${letterId} -- ${stillLettered.length} issue(s) returned to Candidates.`);
+                await refreshParkingDeptLetters();
+            } catch (err) {
+                logToConsole(`Could not discard letter: ${err instanceof Error ? err.message : err}`, true);
+            }
+        }
+
+        // Re-resolves against LIVE historyCache/geofencesCache, not a
+        // stored snapshot -- a geofence's name (or the geofence itself)
+        // may have changed since the letter was first generated.
+        async function downloadParkingDeptLetterAgain(letterId) {
+            const letter = parkingDeptLettersCache.find((l) => l.id === letterId);
+            if (!letter) return;
+            const settings = await loadParkingDeptSettings();
+            const entries = letter.issueIds.map((id) => historyCache.find((e) => e.issueId === id)).filter(Boolean);
+            const model = buildParkingDeptLetterModel(entries);
+            try {
+                await buildAndDownloadParkingDeptLetter(model, settings, letter.generatedAtDisplay);
+            } catch (err) {
+                logToConsole(`Could not rebuild letter for download: ${err instanceof Error ? err.message : err}`, true);
             }
         }
     </script>
