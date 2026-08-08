@@ -1349,6 +1349,12 @@
         const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+        // Same TDZ reasoning as DAY_NAMES/parkingDeptLettersCache above --
+        // renderHistory() calls renderStats() (which reads this) near the
+        // top of the script on every page load, so this can't be declared
+        // down in the Stats-tab section where it's otherwise used.
+        let statsHeatmapYear = new Date().getFullYear();
+
         // Same reasoning as parkingDeptLettersCache/DAY_NAMES above: declared
         // here rather than down with the rest of the Geofence Maintenance
         // code because renderHistory() -> refreshOpenGeofenceIncidents()
@@ -3540,7 +3546,8 @@
         // style -- shows Jan 1 through Dec 31 of statsHeatmapYear, padded
         // out to whole weeks (Sun-Sat) so the grid tiles cleanly. Navigated
         // independently of the range toggle via the prev/next year buttons.
-        let statsHeatmapYear = new Date().getFullYear();
+        // (statsHeatmapYear itself is declared up with DAY_NAMES/MONTH_ABBR,
+        // not here -- see the comment there.)
         function changeStatsHeatmapYear(delta) {
             const minYear = historyCache.length > 0
                 ? Math.min(...historyCache.map((e) => new Date(e.submittedAt).getFullYear()))
