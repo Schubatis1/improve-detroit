@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.18.1)</title>
+    <title>You Can't Park There (v3.19.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -547,7 +547,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.18.1</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.19.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -619,14 +619,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.18.1)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.19.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.18.1)...
+            App initialized (v3.19.0)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -638,13 +638,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.18.1';
+        const APP_VERSION = '3.19.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.19.0', date: '2026-08-08', notes: [
+                'The Stats tab activity heatmap now shows a full calendar year (Jan-Dec) instead of just the last 12 weeks, with month labels and prev/next buttons to browse past years.',
+            ] },
             { version: '3.18.1', date: '2026-08-07', notes: [
                 'Fixed a bug (introduced in 3.18.0) where the Geofence Maintenance edit form could load with every field blank and the map dead -- a script error was silently breaking Firestore sync app-wide on load, not just that form.',
                 'Fixed the hamburger menu button overlapping the "Reports" tab button on the main screen.',
@@ -1344,6 +1347,7 @@
         // the rest of this script (including the photoInput listener setup
         // further down) before it ever executes.
         const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
         // Same reasoning as parkingDeptLettersCache/DAY_NAMES above: declared
         // here rather than down with the rest of the Geofence Maintenance
@@ -3532,9 +3536,21 @@
             return `${h} ${period}`;
         }
 
-        // Compact 12-week activity heatmap, GitHub-contribution-graph style
-        // -- always the last 84 days, independent of the range toggle.
-        function renderHeatmap(entries) {
+        // Full-calendar-year activity heatmap, GitHub-contribution-graph
+        // style -- shows Jan 1 through Dec 31 of statsHeatmapYear, padded
+        // out to whole weeks (Sun-Sat) so the grid tiles cleanly. Navigated
+        // independently of the range toggle via the prev/next year buttons.
+        let statsHeatmapYear = new Date().getFullYear();
+        function changeStatsHeatmapYear(delta) {
+            const minYear = historyCache.length > 0
+                ? Math.min(...historyCache.map((e) => new Date(e.submittedAt).getFullYear()))
+                : statsHeatmapYear;
+            const maxYear = new Date().getFullYear();
+            statsHeatmapYear = Math.min(maxYear, Math.max(minYear, statsHeatmapYear + delta));
+            renderStats();
+        }
+
+        function renderHeatmap(entries, year) {
             const counts = new Map();
             for (const entry of entries) {
                 const key = dateKey(new Date(entry.submittedAt));
@@ -3542,16 +3558,21 @@
             }
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-            const start = new Date(today);
-            start.setDate(start.getDate() - 83 - today.getDay()); // back up to the Sunday 83+ days ago, so weeks align
+            const jan1 = new Date(year, 0, 1);
+            const dec31 = new Date(year, 11, 31);
+            const start = new Date(jan1);
+            start.setDate(start.getDate() - start.getDay()); // back up to the Sunday on/before Jan 1
+            const end = new Date(dec31);
+            end.setDate(end.getDate() + (6 - end.getDay())); // forward to the Saturday on/after Dec 31
 
             const weeks = [];
             const cursor = new Date(start);
-            while (cursor <= today) {
+            while (cursor <= end) {
                 const week = [];
                 for (let i = 0; i < 7; i++) {
-                    const count = cursor > today ? null : (counts.get(dateKey(cursor)) || 0);
-                    week.push({ key: dateKey(cursor), count });
+                    const inYear = cursor >= jan1 && cursor <= dec31;
+                    const count = (!inYear || cursor > today) ? null : (counts.get(dateKey(cursor)) || 0);
+                    week.push({ key: dateKey(cursor), count, isMonthStart: inYear && cursor.getDate() === 1, month: cursor.getMonth() });
                     cursor.setDate(cursor.getDate() + 1);
                 }
                 weeks.push(week);
@@ -3567,11 +3588,15 @@
 
             return `
                 <div class="flex gap-[3px] overflow-x-auto pb-1">
-                    ${weeks.map((week) => `
+                    ${weeks.map((week) => {
+                        const monthStart = week.find((d) => d.isMonthStart);
+                        return `
                         <div class="flex flex-col gap-[3px]">
+                            <div class="h-3 text-[8px] leading-3 text-slate-400 font-semibold">${monthStart ? MONTH_ABBR[monthStart.month] : ''}</div>
                             ${week.map((day) => `<div class="w-[10px] h-[10px] rounded-sm ${levelClass(day.count)}" title="${day.count === null ? '' : `${day.count} report${day.count === 1 ? '' : 's'} on ${day.key}`}"></div>`).join('')}
                         </div>
-                    `).join('')}
+                    `;
+                    }).join('')}
                 </div>
             `;
         }
@@ -3586,6 +3611,9 @@
 
             const inRange = historyCache.filter((e) => isInStatsRange(e, statsRange));
             const rangeLabel = statsRange === 'month' ? 'this month' : statsRange === 'year' ? 'this year' : 'all time';
+
+            const heatmapMinYear = Math.min(...historyCache.map((e) => new Date(e.submittedAt).getFullYear()));
+            const heatmapMaxYear = new Date().getFullYear();
 
             const totalInRange = inRange.length;
             const uniquePlatesInRange = new Set(inRange.flatMap(platesFromEntry)).size;
@@ -3699,8 +3727,14 @@
                 </div>
 
                 <div class="bg-white rounded-lg shadow-sm p-3">
-                    <p class="text-[10px] font-bold text-detroit-navy uppercase mb-2">Last 12 Weeks</p>
-                    ${renderHeatmap(historyCache)}
+                    <div class="flex items-center justify-between mb-2">
+                        <p class="text-[10px] font-bold text-detroit-navy uppercase">${statsHeatmapYear} Activity</p>
+                        <div class="flex items-center gap-2">
+                            <button type="button" class="w-6 h-6 flex items-center justify-center rounded bg-slate-100 text-detroit-navy font-bold text-xs disabled:opacity-30" onclick="changeStatsHeatmapYear(-1)" ${statsHeatmapYear <= heatmapMinYear ? 'disabled' : ''}>&lsaquo;</button>
+                            <button type="button" class="w-6 h-6 flex items-center justify-center rounded bg-slate-100 text-detroit-navy font-bold text-xs disabled:opacity-30" onclick="changeStatsHeatmapYear(1)" ${statsHeatmapYear >= heatmapMaxYear ? 'disabled' : ''}>&rsaquo;</button>
+                        </div>
+                    </div>
+                    ${renderHeatmap(historyCache, statsHeatmapYear)}
                 </div>
 
                 <div class="grid grid-cols-2 gap-2">
