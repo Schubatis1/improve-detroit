@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.20.4)</title>
+    <title>You Can't Park There (v3.21.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -559,7 +559,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.20.4</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.21.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -651,14 +651,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.20.4)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.21.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.20.4)...
+            App initialized (v3.21.0)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -670,13 +670,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.20.4';
+        const APP_VERSION = '3.21.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.21.0', date: '2026-08-09', notes: [
+                'A report\'s own detail view now shows its Parking Dept status alongside Improve Detroit/BLU status, with a "Notified Municipal Parking Dept (mailed)" checkbox to mark it yourself -- independent of the Search/Generate Letter flow, for when you mailed them some other way.',
+            ] },
             { version: '3.20.4', date: '2026-08-09', notes: [
                 'Notify Parking Dept Search now checks every unflagged issue in your report history in one tap, instead of stopping after 15 -- previously a specific issue could sit unchecked for several taps behind a large backlog.',
             ] },
@@ -3392,7 +3395,7 @@
                     <img src="${entry.thumbnail}" class="w-16 h-16 object-cover rounded-lg flex-shrink-0" alt="Submitted photo">
                     <div class="flex-1 min-w-0">
                         <p class="text-xs text-slate-400">${entry.suppressed ? 'Not reported to Detroit' : `#${entry.issueId}`} &middot; ${new Date(entry.submittedAt).toLocaleString()}</p>
-                        <p class="text-xs font-bold uppercase text-slate-500 mt-1">${entry.status}${entry.bluStatus ? ` &middot; BLU: ${entry.bluStatus}` : ''}</p>
+                        <p class="text-xs font-bold uppercase text-slate-500 mt-1">${entry.status}${entry.bluStatus ? ` &middot; BLU: ${entry.bluStatus}` : ''}${entry.parkingDeptFlag ? ` &middot; Parking Dept: ${parkingDeptFlagLabel(entry.parkingDeptFlag)}` : ''}</p>
                     </div>
                 </div>
 
@@ -3400,6 +3403,11 @@
                     ${entry.link ? `<a href="${entry.link}" target="_blank" rel="noopener" class="flex-1 text-center text-xs text-detroit-teal font-semibold border border-detroit-teal rounded-lg py-2">View on Improve Detroit</a>` : ''}
                     ${entry.suppressed ? '' : `<button id="hfRefreshBtn" class="flex-1 text-xs text-slate-600 font-semibold border border-slate-300 rounded-lg py-2 hover:bg-slate-50">Refresh Status</button>`}
                 </div>
+
+                <label class="flex items-center gap-2 bg-white rounded-lg shadow-sm p-3 cursor-pointer">
+                    <input type="checkbox" id="hfParkingDeptNotified" ${entry.parkingDeptFlag === 'notified' ? 'checked' : ''}>
+                    <span class="text-xs font-semibold text-detroit-dark flex-1">Notified Municipal Parking Dept (mailed)</span>
+                </label>
 
                 ${locked ? `<p class="text-center text-xs font-semibold text-slate-500 bg-slate-100 rounded-lg py-2 px-3">Locked — already sent to Bike Lane Uprising</p>` : ''}
 
@@ -3444,6 +3452,7 @@
             document.getElementById('hfBluCategory').value = entry.bluCategory || '';
             document.getElementById('hfGeofence').value = entry.geofenceId || '';
             document.getElementById('hfGeofence').addEventListener('change', (e) => setEntryGeofence(entry.issueId, e.target.value));
+            document.getElementById('hfParkingDeptNotified').addEventListener('change', (e) => setParkingDeptNotified(entry.issueId, e.target.checked));
 
             const lat = Number.isFinite(entry.lat) ? entry.lat : null;
             const lng = Number.isFinite(entry.lng) ? entry.lng : null;
@@ -4603,6 +4612,39 @@
             }
 
             renderParkingDeptLettersList();
+        }
+
+        function parkingDeptFlagLabel(flag) {
+            const labels = { flagged: 'Flagged', lettered: 'Lettered', notified: 'Notified', dismissed: 'Dismissed' };
+            return labels[flag] || flag;
+        }
+
+        // Manual override reachable from a single issue's own fly-in
+        // (#hfParkingDeptNotified) -- independent of the Search/flag/letter
+        // pipeline, for when you mailed the department about this issue
+        // some other way (or want to correct a status the app got wrong).
+        // Unchecking clears the flag entirely rather than reverting to
+        // 'dismissed'/'lettered'/etc -- there's no way to know which of
+        // those (if any) applied before, and clearing just makes the issue
+        // a normal Search candidate again.
+        async function setParkingDeptNotified(issueId, notified) {
+            try {
+                const uid = currentUid || await historySignedIn;
+                if (notified) {
+                    await historyCollection(uid).doc(String(issueId)).update({
+                        parkingDeptFlag: 'notified',
+                        parkingDeptNotifiedAt: new Date().toISOString(),
+                    });
+                } else {
+                    await historyCollection(uid).doc(String(issueId)).update({
+                        parkingDeptFlag: firebase.firestore.FieldValue.delete(),
+                        parkingDeptNotifiedAt: firebase.firestore.FieldValue.delete(),
+                    });
+                }
+                logToConsole(`Issue #${issueId} Parking Dept notified status set to ${notified}.`);
+            } catch (err) {
+                logToConsole(`Could not update Parking Dept notified status for issue #${issueId}: ${err instanceof Error ? err.message : err}`, true);
+            }
         }
 
         async function dismissParkingDeptCandidate(issueId) {
