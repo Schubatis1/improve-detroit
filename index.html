@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.20.3)</title>
+    <title>You Can't Park There (v3.20.4)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -271,11 +271,11 @@
             </button>
             <p id="parkingDeptSearchStatus" class="text-center text-xs font-medium text-slate-500 mt-2"></p>
 
-            <!-- Search only scans searchCapPerRun (15) not-yet-checked issues
-                 per tap, oldest-checked-first -- with a large report history
-                 a specific recent issue can take several taps to be reached.
-                 This checks one issue immediately, regardless of queue
-                 position. -->
+            <!-- Search scans the whole report history every tap (see
+                 searchParkingDeptCandidates), so this is only needed to
+                 check/recheck one specific issue without waiting on a full
+                 run, or to force a recheck of one already flagged/dismissed
+                 (Search skips those). -->
             <div class="flex gap-2 mt-3">
                 <input type="text" id="parkingDeptCheckIssueInput" inputmode="numeric" placeholder="Issue #" class="flex-1 text-sm border border-detroit-mint rounded px-2 py-2">
                 <button id="parkingDeptCheckIssueBtn" class="bg-detroit-navy text-white text-sm font-semibold px-3 py-2 rounded-lg shadow hover:bg-detroit-dark transition">
@@ -559,7 +559,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.20.3</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.20.4</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -651,14 +651,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.20.3)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.20.4)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.20.3)...
+            App initialized (v3.20.4)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -670,13 +670,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.20.3';
+        const APP_VERSION = '3.20.4';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.20.4', date: '2026-08-09', notes: [
+                'Notify Parking Dept Search now checks every unflagged issue in your report history in one tap, instead of stopping after 15 -- previously a specific issue could sit unchecked for several taps behind a large backlog.',
+            ] },
             { version: '3.20.3', date: '2026-08-09', notes: [
                 'Notify Parking Dept now has a "Check Issue" field to immediately check one specific issue for a parking-dept referral, instead of waiting for it to come up in the 15-per-tap Search queue -- handy right after a new officer comment comes in on an older report.',
             ] },
@@ -4207,23 +4210,22 @@
             return matched;
         }
 
-        // Scans up to `limit` not-yet-flagged/lettered/notified/dismissed,
-        // non-suppressed issues (suppressed reports never got a real
-        // SeeClickFix ticket -- nothing to fetch comments from), oldest-
-        // checked-first, sequentially (not parallel -- keeps the debug
-        // console legible and avoids hammering the shared free corsproxy.io
-        // proxy every other SeeClickFix call in this app depends on). Each
-        // issue is wrapped in its own try/catch so one bad ticket doesn't
-        // abort the run.
-        async function searchParkingDeptCandidates(limit) {
-            limit = limit || CONFIG.parkingDeptLetter.searchCapPerRun;
+        // Scans every not-yet-flagged/lettered/notified/dismissed,
+        // non-suppressed issue (suppressed reports never got a real
+        // SeeClickFix ticket -- nothing to fetch comments from) in the
+        // whole report history, oldest-checked-first, sequentially (not
+        // parallel -- keeps the debug console legible and avoids hammering
+        // the shared free corsproxy.io proxy every other SeeClickFix call
+        // in this app depends on -- this is why a run can take a while
+        // with a large history). Each issue is wrapped in its own
+        // try/catch so one bad ticket doesn't abort the run.
+        async function searchParkingDeptCandidates() {
             const statusEl = document.getElementById('parkingDeptSearchStatus');
             const uid = currentUid || await historySignedIn;
             const candidates = historyCache
                 .filter((entry) => !entry.suppressed && !['flagged', 'lettered', 'notified', 'dismissed'].includes(entry.parkingDeptFlag))
                 .slice()
-                .sort((a, b) => new Date(a.parkingDeptLastCheckedAt || 0) - new Date(b.parkingDeptLastCheckedAt || 0))
-                .slice(0, limit);
+                .sort((a, b) => new Date(a.parkingDeptLastCheckedAt || 0) - new Date(b.parkingDeptLastCheckedAt || 0));
 
             if (candidates.length === 0) {
                 logToConsole('Parking Dept search: no unchecked issues left to scan.');
@@ -4260,13 +4262,12 @@
             btn.disabled = false;
         }
 
-        // Checks a single issue right now, regardless of where it sits in
-        // the oldest-checked-first Search queue -- for when a specific
-        // report (e.g. one you just got a comment on) shouldn't have to
-        // wait behind searchCapPerRun's 15-per-tap backlog. Only works for
-        // issues already in your report history (it writes the flag back
-        // to that same Firestore doc), and re-checks even if already
-        // flagged/dismissed, since this is an explicit one-off lookup.
+        // Checks a single issue right now instead of running a full Search
+        // over the whole history -- for a quick one-off lookup (e.g. right
+        // after a new comment lands). Only works for issues already in
+        // your report history (it writes the flag back to that same
+        // Firestore doc), and re-checks even if already flagged/dismissed
+        // -- Search itself skips those, but this is an explicit lookup.
         async function runParkingDeptCheckById() {
             const input = document.getElementById('parkingDeptCheckIssueInput');
             const status = document.getElementById('parkingDeptSearchStatus');

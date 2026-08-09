@@ -128,12 +128,6 @@ window.APP_CONFIG = {
             'Municipal Parking Department',
         ],
         parkingDeptPhone: '313-221-2558',
-        // Search (hamburger menu -> Notify Parking Dept -> Search) checks
-        // at most this many not-yet-flagged issues per tap, least-recently-
-        // checked first -- same reasoning as scripts/submit-to-blu.js's
-        // --limit 10 default: keeps an on-demand mobile action fast; tap
-        // Search again for more.
-        searchCapPerRun: 15,
         // Letter template text. {{DATE}}/{{GEOFENCE_NAME}}/{{LETTER_DATE}}
         // are filled in by buildParkingDeptLetterModel()/the docx builder.
         letterIntro: 'I am writing to follow up on a number of bicycle lane obstruction incidents I previously reported to the City of Detroit through the Improve Detroit system. In each case, the responding officer noted that the vehicle was gone on arrival and directed me to contact the City of Detroit Municipal Parking Department Enforcement directly, since no violation could be issued after the fact. I am providing the details below so that these recurring problem locations and vehicles can be addressed going forward.',
