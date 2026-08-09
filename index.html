@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.23.0)</title>
+    <title>You Can't Park There (v3.24.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -619,7 +619,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.23.0</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.24.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -656,9 +656,68 @@
     <!-- Submission History & Receipt Tracker. Collapsed to the most recent
          HISTORY_LIST_COLLAPSED_COUNT entries by default (renderHistory()) --
          with months/years of reports this list was the single biggest
-         thing on the main screen. -->
+         thing on the main screen. Filters (see applyHistoryFilters/
+         renderHistory) apply BEFORE that collapse, so "Show All (N)"
+         always reflects the filtered count, not the full history's. -->
     <div class="mb-6">
-        <h2 class="text-xs font-bold text-detroit-navy uppercase mb-2 px-1">Submission History</h2>
+        <div class="flex justify-between items-center mb-2 px-1">
+            <h2 class="text-xs font-bold text-detroit-navy uppercase">Submission History</h2>
+            <button id="historyFiltersToggleBtn" class="text-xs font-semibold text-detroit-teal hover:text-detroit-dark flex items-center gap-1">
+                <span id="historyFiltersToggleLabel">Filters</span>
+                <svg id="historyFiltersToggleIcon" class="w-3 h-3 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+            </button>
+        </div>
+
+        <!-- Options for filterBluStatus/filterStatus are populated from
+             whatever values actually appear in historyCache (see
+             populateHistoryFilterOptions), not a hardcoded list -- BLU/
+             SeeClickFix status strings aren't a small fixed enum this app
+             controls. filterGeofence's options come from geofencesCache. -->
+        <div id="historyFiltersPanel" class="hidden bg-white rounded-lg shadow-sm p-3 mb-2 flex flex-col gap-2">
+            <div>
+                <label class="text-[10px] font-bold text-detroit-navy uppercase">Parking Dept Status</label>
+                <select id="filterParkingDept" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                    <option value="">All</option>
+                    <option value="notDetermined">Not Determined</option>
+                    <option value="notRequested">Not Requested</option>
+                    <option value="awaiting">Awaiting Notification</option>
+                    <option value="notified">Notified</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-[10px] font-bold text-detroit-navy uppercase">BLU Status</label>
+                <select id="filterBluStatus" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                    <option value="">All</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-[10px] font-bold text-detroit-navy uppercase">Improve Detroit Status</label>
+                <select id="filterStatus" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                    <option value="">All</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-[10px] font-bold text-detroit-navy uppercase">Geofence</label>
+                <select id="filterGeofence" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                    <option value="">All</option>
+                    <option value="__none__">Not Linked to a Geofence</option>
+                </select>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+                <div>
+                    <label class="text-[10px] font-bold text-detroit-navy uppercase">From</label>
+                    <input type="date" id="filterDateFrom" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                </div>
+                <div>
+                    <label class="text-[10px] font-bold text-detroit-navy uppercase">To</label>
+                    <input type="date" id="filterDateTo" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                </div>
+            </div>
+            <button id="historyFiltersClearBtn" class="text-xs text-slate-500 font-semibold underline self-start hover:text-detroit-dark">Clear Filters</button>
+        </div>
+
         <div id="historyList" class="flex flex-col gap-2 lg:grid lg:grid-cols-2 lg:gap-3"></div>
         <button id="historyShowMoreBtn" class="hidden w-full flex items-center justify-center gap-1 text-xs font-semibold text-detroit-teal py-2 mt-1 hover:text-detroit-dark">
             <span id="historyShowMoreLabel">Show All</span>
@@ -720,14 +779,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.23.0)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.24.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.23.0)...
+            App initialized (v3.24.0)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -739,13 +798,17 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.23.0';
+        const APP_VERSION = '3.24.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.24.0', date: '2026-08-09', notes: [
+                'Added filters to Submission History (tap "Filters"): Parking Dept Status (Not Determined / Not Requested / Awaiting Notification / Notified), BLU Status, Improve Detroit Status, Geofence, and a date range. Filters apply before the "5 most recent" collapse, so Show All reflects the filtered count.',
+                'Submission History now defaults to the 6 most recent reports (was 5), and photos are larger on desktop.',
+            ] },
             { version: '3.23.0', date: '2026-08-09', notes: [
                 'Submission History now defaults to the 5 most recent reports with a "Show All" button to expand the rest, instead of always listing everything -- with months of reports this was the biggest thing on the main screen.',
                 'Desktop (roughly laptop-width or wider): the hamburger menu is now a permanent sidebar instead of a drawer you have to open; Submission History and Repeat Offenders show two columns of cards (with larger photos in Submission History); and Stats lays its cards out in two balanced columns instead of one long list. Phones/tablets are unaffected.',
@@ -1158,12 +1221,54 @@
         const submitAllBtn = document.getElementById('submitAllBtn');
         const historyList = document.getElementById('historyList');
         const historyShowMoreBtn = document.getElementById('historyShowMoreBtn');
-        const HISTORY_LIST_COLLAPSED_COUNT = 5;
+        const HISTORY_LIST_COLLAPSED_COUNT = 6;
         let historyListExpanded = false;
         historyShowMoreBtn.addEventListener('click', () => {
             historyListExpanded = !historyListExpanded;
             renderHistory();
         });
+
+        // Submission History filters -- see applyHistoryFilters (the
+        // predicate), populateHistoryFilterOptions (BLU/Improve Detroit
+        // dropdowns, populated from whatever values actually appear in
+        // historyCache rather than a hardcoded list), and renderHistory
+        // (where filtering happens, before the Show All collapse above).
+        const historyFiltersToggleBtn = document.getElementById('historyFiltersToggleBtn');
+        const historyFiltersToggleIcon = document.getElementById('historyFiltersToggleIcon');
+        const historyFiltersToggleLabel = document.getElementById('historyFiltersToggleLabel');
+        const historyFiltersPanel = document.getElementById('historyFiltersPanel');
+        const filterParkingDeptEl = document.getElementById('filterParkingDept');
+        const filterBluStatusEl = document.getElementById('filterBluStatus');
+        const filterStatusEl = document.getElementById('filterStatus');
+        const filterGeofenceEl = document.getElementById('filterGeofence');
+        const filterDateFromEl = document.getElementById('filterDateFrom');
+        const filterDateToEl = document.getElementById('filterDateTo');
+        const historyFilters = { parkingDept: '', bluStatus: '', status: '', geofenceId: '', dateFrom: '', dateTo: '' };
+
+        historyFiltersToggleBtn.addEventListener('click', () => {
+            const nowOpen = historyFiltersPanel.classList.toggle('hidden') === false;
+            historyFiltersToggleIcon.classList.toggle('rotate-180', nowOpen);
+        });
+        [
+            [filterParkingDeptEl, 'parkingDept'],
+            [filterBluStatusEl, 'bluStatus'],
+            [filterStatusEl, 'status'],
+            [filterGeofenceEl, 'geofenceId'],
+            [filterDateFromEl, 'dateFrom'],
+            [filterDateToEl, 'dateTo'],
+        ].forEach(([el, key]) => {
+            el.addEventListener('change', () => {
+                historyFilters[key] = el.value;
+                historyListExpanded = false; // a new filter should show its own top 5, not stay expanded from before
+                renderHistory();
+            });
+        });
+        document.getElementById('historyFiltersClearBtn').addEventListener('click', () => {
+            Object.keys(historyFilters).forEach((key) => { historyFilters[key] = ''; });
+            historyListExpanded = false;
+            renderHistory();
+        });
+
         const offendersList = document.getElementById('offendersList');
         const statsContent = document.getElementById('statsContent');
 
@@ -3436,21 +3541,99 @@
             return !!entry.bluStatus && entry.bluStatus !== 'pending';
         }
 
+        // Buckets parkingDeptFlag (+ whether it's ever been checked) into
+        // the 4 categories the Parking Dept Status filter offers:
+        // - 'notDetermined': never checked (parkingDeptLastCheckedAt unset)
+        //   -- Search hasn't reached it yet, and it's never been manually
+        //   checked via "Check Issue" either.
+        // - 'notRequested': checked and no referral found (or manually
+        //   dismissed as a false match) -- determined a notification isn't
+        //   needed.
+        // - 'awaiting': matched (flagged) or a letter's been generated
+        //   (lettered), but not yet marked notified.
+        // - 'notified': done.
+        function parkingDeptStatusCategory(entry) {
+            if (entry.parkingDeptFlag === 'notified') return 'notified';
+            if (entry.parkingDeptFlag === 'flagged' || entry.parkingDeptFlag === 'lettered') return 'awaiting';
+            if (entry.parkingDeptFlag === 'dismissed') return 'notRequested';
+            if (entry.parkingDeptLastCheckedAt) return 'notRequested';
+            return 'notDetermined';
+        }
+
+        // Predicate for the Submission History filters -- every active
+        // filter must match (AND, not OR). Date range is inclusive and
+        // compares by calendar day (not time-of-day) in the browser's
+        // local timezone, matching what the date inputs themselves show.
+        function applyHistoryFilters(entry) {
+            if (historyFilters.parkingDept && parkingDeptStatusCategory(entry) !== historyFilters.parkingDept) return false;
+            if (historyFilters.bluStatus && (entry.bluStatus || '') !== historyFilters.bluStatus) return false;
+            if (historyFilters.status && (entry.status || '') !== historyFilters.status) return false;
+            if (historyFilters.geofenceId) {
+                if (historyFilters.geofenceId === '__none__' ? !!entry.geofenceId : entry.geofenceId !== historyFilters.geofenceId) return false;
+            }
+            if (historyFilters.dateFrom || historyFilters.dateTo) {
+                const submitted = new Date(entry.submittedAt);
+                if (historyFilters.dateFrom && submitted < new Date(historyFilters.dateFrom + 'T00:00:00')) return false;
+                if (historyFilters.dateTo && submitted > new Date(historyFilters.dateTo + 'T23:59:59')) return false;
+            }
+            return true;
+        }
+
+        // Rebuilds the BLU Status/Improve Detroit Status <option> lists
+        // from whatever values actually appear in historyCache (rather
+        // than a hardcoded list -- these are raw strings from Bike Lane
+        // Uprising/SeeClickFix, not a small fixed enum this app defines),
+        // and the Geofence list from geofencesCache. Preserves the
+        // currently-selected filter value (from historyFilters, not the
+        // <select>'s own DOM state, which regenerating innerHTML wipes)
+        // if it's still a valid option; falls back to "All" otherwise.
+        function populateHistoryFilterOptions() {
+            const bluValues = [...new Set(historyCache.map((e) => e.bluStatus).filter(Boolean))].sort();
+            filterBluStatusEl.innerHTML = '<option value="">All</option>'
+                + bluValues.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+            filterBluStatusEl.value = bluValues.includes(historyFilters.bluStatus) ? historyFilters.bluStatus : '';
+
+            const statusValues = [...new Set(historyCache.map((e) => e.status).filter(Boolean))].sort();
+            filterStatusEl.innerHTML = '<option value="">All</option>'
+                + statusValues.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+            filterStatusEl.value = statusValues.includes(historyFilters.status) ? historyFilters.status : '';
+
+            const geofenceIds = geofencesCache.map((g) => g.id);
+            filterGeofenceEl.innerHTML = '<option value="">All</option><option value="__none__">Not Linked to a Geofence</option>'
+                + geofencesCache.map((g) => `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)}</option>`).join('');
+            filterGeofenceEl.value = (historyFilters.geofenceId === '__none__' || geofenceIds.includes(historyFilters.geofenceId))
+                ? historyFilters.geofenceId
+                : '';
+
+            filterParkingDeptEl.value = historyFilters.parkingDept;
+            filterDateFromEl.value = historyFilters.dateFrom;
+            filterDateToEl.value = historyFilters.dateTo;
+        }
+
         function renderHistory() {
+            populateHistoryFilterOptions();
+            const filtered = historyCache.filter(applyHistoryFilters);
+            const hasActiveFilters = Object.values(historyFilters).some(Boolean);
+
             if (historyCache.length === 0) {
                 historyList.innerHTML = '<p class="text-xs text-slate-400 px-1">No submissions yet.</p>';
                 historyShowMoreBtn.classList.add('hidden');
+            } else if (filtered.length === 0) {
+                historyList.innerHTML = '<p class="text-xs text-slate-400 px-1">No submissions match these filters.</p>';
+                historyShowMoreBtn.classList.add('hidden');
             } else {
-                // historyCache is already newest-first (see initHistorySync's
-                // orderBy('submittedAt', 'desc')), so slicing from the front
-                // keeps the most recent entries -- and since the slice always
-                // starts at 0, .map's local idx still lines up with the
-                // entry's real historyCache index, so openHistoryFlyIn(idx)
-                // keeps working unchanged.
-                const visible = historyListExpanded ? historyCache : historyCache.slice(0, HISTORY_LIST_COLLAPSED_COUNT);
-                historyList.innerHTML = visible.map((entry, idx) => `
-                    <div class="bg-white rounded-lg shadow-sm p-3 flex gap-3 items-center cursor-pointer hover:shadow-md transition" onclick="openHistoryFlyIn(${idx})">
-                        <img src="${entry.thumbnail}" class="w-12 h-12 lg:w-20 lg:h-20 object-cover rounded flex-shrink-0" alt="Submitted photo">
+                // filtered is a subset of historyCache (already newest-first,
+                // see initHistorySync's orderBy('submittedAt', 'desc')) in
+                // the same relative order, so slicing from the front still
+                // keeps the most recent matching entries. Each entry's REAL
+                // historyCache index (not its position in this filtered/
+                // sliced subset) is looked up via indexOf for
+                // openHistoryFlyIn(idx), which indexes into the full,
+                // unfiltered historyCache.
+                const visible = historyListExpanded ? filtered : filtered.slice(0, HISTORY_LIST_COLLAPSED_COUNT);
+                historyList.innerHTML = visible.map((entry) => `
+                    <div class="bg-white rounded-lg shadow-sm p-3 flex gap-3 items-center cursor-pointer hover:shadow-md transition" onclick="openHistoryFlyIn(${historyCache.indexOf(entry)})">
+                        <img src="${entry.thumbnail}" class="w-12 h-12 lg:w-32 lg:h-32 object-cover rounded-lg flex-shrink-0" alt="Submitted photo">
                         <div class="flex-1 min-w-0">
                             <p class="text-sm font-medium text-detroit-dark truncate">${entry.address}</p>
                             <p class="text-[10px] font-bold uppercase text-slate-500 truncate">${entry.status}${entry.bluStatus ? ` &middot; BLU: ${entry.bluStatus}` : ''}</p>
@@ -3461,16 +3644,19 @@
                     </div>
                 `).join('');
 
-                if (historyCache.length > HISTORY_LIST_COLLAPSED_COUNT) {
+                if (filtered.length > HISTORY_LIST_COLLAPSED_COUNT) {
                     historyShowMoreBtn.classList.remove('hidden');
                     document.getElementById('historyShowMoreLabel').textContent = historyListExpanded
                         ? 'Show Less'
-                        : `Show All (${historyCache.length})`;
+                        : `Show All (${filtered.length})`;
                     document.getElementById('historyShowMoreIcon').classList.toggle('rotate-180', historyListExpanded);
                 } else {
                     historyShowMoreBtn.classList.add('hidden');
                 }
             }
+
+            historyFiltersToggleLabel.textContent = hasActiveFilters ? 'Filters •' : 'Filters';
+
             renderOffenders();
             renderStats();
             renderParkingDeptCandidates();
