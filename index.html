@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.20.0)</title>
+    <title>You Can't Park There (v3.20.1)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -547,7 +547,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.20.0</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.20.1</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -639,14 +639,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.20.0)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.20.1)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.20.0)...
+            App initialized (v3.20.1)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -658,13 +658,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.20.0';
+        const APP_VERSION = '3.20.1';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.20.1', date: '2026-08-09', notes: [
+                'Report Map pins are now tappable -- a popup shows the incident number, address, and status, with a link into the full report card. That report card has a new Geofence field to link, relink, or unlink the report from any geofence, right from its own detail view (not just from that geofence\'s "Link Existing Issue" search).',
+            ] },
             { version: '3.20.0', date: '2026-08-09', notes: [
                 'Added a Report Map to the Stats tab -- tap the new "Report Map" tile to see every report in the current range plotted on a map, color-coded by whether it landed at a geofence.',
                 'Added four new geofences: Core City Park, RiverWalk -- Milliken State Park & Harbor, RiverWalk -- parking lot, and UM Center for Innovation construction parking. 28 past reports were linked to them retroactively.',
@@ -749,6 +752,19 @@
             const defaultOption = withDefault ? '<option value="">Default</option>' : '';
             return defaultOption + CONFIG.bluCategories.map((c) =>
                 `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`
+            ).join('');
+        }
+
+        // Options for a plain "which geofence is this report tagged to"
+        // <select> -- used by openHistoryFlyIn's Geofence field. Distinct
+        // from the Geofence Maintenance screen's "Link Existing Issue"
+        // search (linkIssueToGeofence/renderGeofenceLinkResults), which goes
+        // the other direction: pick a geofence first, then find an issue to
+        // attach to it. This is the same underlying geofenceId field, just
+        // editable from the report's own side.
+        function geofenceOptionsHtml() {
+            return '<option value="">None</option>' + geofencesCache.map((g) =>
+                `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)}</option>`
             ).join('');
         }
 
@@ -1330,6 +1346,7 @@
             }).addTo(statsMap);
 
             const markers = inRange.map((entry) => {
+                const idx = historyCache.indexOf(entry);
                 const marker = L.circleMarker([entry.lat, entry.lng], {
                     radius: 6,
                     color: entry.geofenceId ? '#1d3a6b' : '#19a696',
@@ -1338,7 +1355,17 @@
                     fillOpacity: 0.5,
                 }).addTo(statsMap);
                 const when = new Date(entry.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                marker.bindPopup(`<strong>${escapeHtml(entry.address || 'Unknown address')}</strong><br>${when} &middot; ${escapeHtml(entry.status || '')}`);
+                // A small tap preview -- the issue number, address, and date
+                // -- with a link into the full report fly-in (see
+                // openHistoryFlyIn) for editing, including the Geofence field
+                // to link/relink/unlink it, same idea as tapping a history
+                // card in the Reports tab.
+                marker.bindPopup(`
+                    <strong>${entry.suppressed ? 'Not reported to Detroit' : `#${entry.issueId}`}</strong><br>
+                    ${escapeHtml(entry.address || 'Unknown address')}<br>
+                    ${when} &middot; ${escapeHtml(entry.status || '')}<br>
+                    <a href="#" onclick="closeStatsMap(); openHistoryFlyIn(${idx}); return false;" style="color:#0f8f80;font-weight:600">View full report &amp; link geofence</a>
+                `);
                 return marker;
             });
 
@@ -2917,6 +2944,24 @@
             }
         }
 
+        // Sets a history entry's geofenceId to an arbitrary geofence (or
+        // clears it), from the report's own side rather than a geofence's
+        // "Link Existing Issue" search -- see openHistoryFlyIn's Geofence
+        // field. Applies immediately on change, same as Link/Unlink above,
+        // not folded into saveHistoryEdits' Save button since geofence
+        // tagging isn't a BLU submission field and should stay editable even
+        // once the report is BLU-locked (see isBluLocked).
+        async function setEntryGeofence(issueId, geofenceId) {
+            try {
+                const uid = currentUid || await historySignedIn;
+                await historyCollection(uid).doc(String(issueId)).update({ geofenceId: geofenceId || null });
+                const name = geofenceId ? ((geofencesCache.find((g) => g.id === geofenceId) || {}).name || geofenceId) : null;
+                logToConsole(name ? `Linked issue #${issueId} to geofence "${name}".` : `Unlinked issue #${issueId} from its geofence.`);
+            } catch (err) {
+                logToConsole(`Could not update geofence link for issue #${issueId}: ${err instanceof Error ? err.message : err}`, true);
+            }
+        }
+
         // Called from the end of renderHistory() (alongside
         // renderOffenders/renderStats/renderParkingDeptCandidates) so a
         // link/unlink -- or any other history change -- is reflected live
@@ -3345,6 +3390,13 @@
                 <p class="text-[10px] text-slate-400 font-mono" id="hfCoords">--</p>
 
                 <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Geofence</label>
+                    <select id="hfGeofence" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                        ${geofenceOptionsHtml()}
+                    </select>
+                </div>
+
+                <div>
                     <label class="text-xs font-bold text-detroit-navy uppercase">Description (sent to Bike Lane Uprising)</label>
                     <textarea id="hfDescription" rows="3" ${locked ? 'disabled' : ''} class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1 disabled:bg-slate-100 disabled:text-slate-400">${escapeHtml(entry.description || '')}</textarea>
                 </div>
@@ -3368,6 +3420,8 @@
             `;
 
             document.getElementById('hfBluCategory').value = entry.bluCategory || '';
+            document.getElementById('hfGeofence').value = entry.geofenceId || '';
+            document.getElementById('hfGeofence').addEventListener('change', (e) => setEntryGeofence(entry.issueId, e.target.value));
 
             const lat = Number.isFinite(entry.lat) ? entry.lat : null;
             const lng = Number.isFinite(entry.lng) ? entry.lng : null;
