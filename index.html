@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.24.0)</title>
+    <title>You Can't Park There (v3.25.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -619,7 +619,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.24.0</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.25.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -779,14 +779,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.24.0)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.25.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.24.0)...
+            App initialized (v3.25.0)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -798,13 +798,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.24.0';
+        const APP_VERSION = '3.25.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.25.0', date: '2026-08-09', notes: [
+                'A report\'s fly-in now shows its comments from Improve Detroit, with the commenter\'s name/role and timestamp. Fetched once and cached (in Firestore and, via the existing local mirror, on-device too), so reopening the same report doesn\'t re-query Improve Detroit -- tap Refresh to pull anything new.',
+            ] },
             { version: '3.24.0', date: '2026-08-09', notes: [
                 'Added filters to Submission History (tap "Filters"): Parking Dept Status (Not Determined / Not Requested / Awaiting Notification / Notified), BLU Status, Improve Detroit Status, Geofence, and a date range. Filters apply before the "5 most recent" collapse, so Show All reflects the filtered count.',
                 'Submission History now defaults to the 6 most recent reports (was 5), and photos are larger on desktop.',
@@ -3694,6 +3697,18 @@
                     ${entry.suppressed ? '' : `<button id="hfRefreshBtn" class="flex-1 text-xs text-slate-600 font-semibold border border-slate-300 rounded-lg py-2 hover:bg-slate-50">Refresh Status</button>`}
                 </div>
 
+                ${entry.suppressed ? '' : `
+                <div class="bg-white rounded-lg shadow-sm p-3">
+                    <div class="flex justify-between items-center mb-1">
+                        <p class="text-xs font-bold text-detroit-navy uppercase">Comments from Improve Detroit</p>
+                        <button id="hfCommentsRefreshBtn" class="text-[10px] text-detroit-teal font-semibold hover:text-detroit-dark">Refresh</button>
+                    </div>
+                    <div id="hfComments" data-issue-id="${escapeHtml(String(entry.issueId))}">
+                        <p class="text-xs text-slate-400">Loading...</p>
+                    </div>
+                </div>
+                `}
+
                 <label class="flex items-center gap-2 bg-white rounded-lg shadow-sm p-3 cursor-pointer">
                     <input type="checkbox" id="hfParkingDeptNotified" ${entry.parkingDeptFlag === 'notified' ? 'checked' : ''}>
                     <span class="text-xs font-semibold text-detroit-dark flex-1">Notified Municipal Parking Dept (mailed)</span>
@@ -3768,6 +3783,8 @@
 
             if (!entry.suppressed) {
                 document.getElementById('hfRefreshBtn').addEventListener('click', () => refreshHistoryStatus(idx));
+                document.getElementById('hfCommentsRefreshBtn').addEventListener('click', () => loadAndRenderFlyInComments(entry, true));
+                loadAndRenderFlyInComments(entry, false);
             }
             if (!locked) {
                 document.getElementById('hfSaveBtn').addEventListener('click', () => saveHistoryEdits(idx));
@@ -4389,6 +4406,83 @@
                 if (pageComments.length < 100) break; // short page -- last one
             }
             return comments;
+        }
+
+        // Cached wrapper around fetchAllIssueComments for the report
+        // fly-in's Comments section (see openHistoryFlyIn/
+        // loadAndRenderFlyInComments below). Cached onto the history doc
+        // itself (commentsCache/commentsCachedAt) rather than a separate
+        // mechanism -- it then rides along through the SAME Firestore
+        // sync + localStorage mirror (cacheHistoryLocally) every other
+        // history field already uses, in both Firebase and local storage
+        // for free. Returns the existing cache with no network call
+        // unless `force` is set (the fly-in's "Refresh" button) or
+        // nothing's cached yet -- the whole point being to not hit
+        // SeeClickFix again just to reopen the same report.
+        async function loadIssueComments(entry, uid, force) {
+            if (!force && Array.isArray(entry.commentsCache)) {
+                return entry.commentsCache;
+            }
+            const raw = await fetchAllIssueComments(entry.issueId);
+            const comments = raw
+                .map((c) => ({
+                    id: c.id,
+                    text: c.text,
+                    createdAt: c.createdAt,
+                    commenterName: (c.raw && c.raw.commenter && c.raw.commenter.name) || null,
+                    commenterRole: (c.raw && c.raw.commenter && c.raw.commenter.role) || null,
+                }))
+                .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+            await historyCollection(uid).doc(String(entry.issueId)).update({
+                commentsCache: comments,
+                commentsCachedAt: new Date().toISOString(),
+            });
+            // onSnapshot picks this up, refreshes historyCache, and mirrors
+            // it to localStorage via cacheHistoryLocally -- same as every
+            // other history field write in this app.
+            return comments;
+        }
+
+        function commentsListHtml(comments) {
+            if (comments.length === 0) return '<p class="text-xs text-slate-400">No comments yet.</p>';
+            return comments.map((c) => `
+                <div class="border-b border-slate-100 last:border-0 py-2">
+                    <p class="text-[10px] font-bold text-detroit-navy uppercase">${escapeHtml(c.commenterName || 'Unknown')}${c.commenterRole ? ` &middot; ${escapeHtml(c.commenterRole)}` : ''}</p>
+                    <p class="text-[10px] text-slate-400 mb-1">${c.createdAt ? new Date(c.createdAt).toLocaleString() : ''}</p>
+                    <p class="text-xs text-detroit-dark whitespace-pre-wrap">${escapeHtml(c.text)}</p>
+                </div>
+            `).join('');
+        }
+
+        // Loads (cache-first, see loadIssueComments) and renders an
+        // issue's comments into the fly-in's #hfComments container.
+        // Guards against the fly-in having moved on to a different report
+        // (or closed) before an in-flight fetch resolves, by re-checking
+        // #hfComments's data-issue-id against the one this call started
+        // for -- #hfComments is rebuilt fresh (new element, same id) by
+        // every openHistoryFlyIn call, so a stale write would otherwise
+        // land in the DOM as if it were the currently-open report's data.
+        async function loadAndRenderFlyInComments(entry, force) {
+            const issueId = String(entry.issueId);
+            if (force) {
+                const container = document.getElementById('hfComments');
+                if (container && container.dataset.issueId === issueId) {
+                    container.innerHTML = '<p class="text-xs text-slate-400">Refreshing...</p>';
+                }
+            }
+            try {
+                const uid = currentUid || await historySignedIn;
+                const comments = await loadIssueComments(entry, uid, force);
+                const container = document.getElementById('hfComments');
+                if (!container || container.dataset.issueId !== issueId) return;
+                container.innerHTML = commentsListHtml(comments);
+            } catch (err) {
+                const container = document.getElementById('hfComments');
+                if (container && container.dataset.issueId === issueId) {
+                    container.innerHTML = '<p class="text-xs text-red-500">Could not load comments -- check debug console.</p>';
+                }
+                logToConsole(`Could not load comments for issue #${issueId}: ${err instanceof Error ? err.message : err}`, true);
+            }
         }
 
         async function postIssueComment(issueId, commentText) {
