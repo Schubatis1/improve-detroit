@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.20.2)</title>
+    <title>You Can't Park There (v3.20.3)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -270,6 +270,18 @@
                 Search for New Candidates
             </button>
             <p id="parkingDeptSearchStatus" class="text-center text-xs font-medium text-slate-500 mt-2"></p>
+
+            <!-- Search only scans searchCapPerRun (15) not-yet-checked issues
+                 per tap, oldest-checked-first -- with a large report history
+                 a specific recent issue can take several taps to be reached.
+                 This checks one issue immediately, regardless of queue
+                 position. -->
+            <div class="flex gap-2 mt-3">
+                <input type="text" id="parkingDeptCheckIssueInput" inputmode="numeric" placeholder="Issue #" class="flex-1 text-sm border border-detroit-mint rounded px-2 py-2">
+                <button id="parkingDeptCheckIssueBtn" class="bg-detroit-navy text-white text-sm font-semibold px-3 py-2 rounded-lg shadow hover:bg-detroit-dark transition">
+                    Check Issue
+                </button>
+            </div>
 
             <button id="parkingDeptSettingsBtn" class="text-xs text-detroit-teal font-semibold underline mt-3 mb-4">
                 Mailing Address Settings
@@ -547,7 +559,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.20.2</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.20.3</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -639,14 +651,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.20.2)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.20.3)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.20.2)...
+            App initialized (v3.20.3)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -658,13 +670,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.20.2';
+        const APP_VERSION = '3.20.3';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.20.3', date: '2026-08-09', notes: [
+                'Notify Parking Dept now has a "Check Issue" field to immediately check one specific issue for a parking-dept referral, instead of waiting for it to come up in the 15-per-tap Search queue -- handy right after a new officer comment comes in on an older report.',
+            ] },
             { version: '3.20.2', date: '2026-08-09', notes: [
                 '"Notify Parking Dept" detection now also matches any comment containing the parking enforcement phone number (313-221-2558) in any punctuation, not just the "Municipal Parking Department" phrase -- some officers leave just the number.',
             ] },
@@ -1175,6 +1190,7 @@
         });
         parkingDeptCloseBtn.addEventListener('click', () => parkingDeptScreen.classList.add('hidden'));
         document.getElementById('parkingDeptSearchBtn').addEventListener('click', runParkingDeptSearch);
+        document.getElementById('parkingDeptCheckIssueBtn').addEventListener('click', runParkingDeptCheckById);
         document.getElementById('parkingDeptGenerateBtn').addEventListener('click', generateParkingDeptLetter);
         document.getElementById('parkingDeptSettingsBtn').addEventListener('click', showParkingDeptSettings);
         document.getElementById('parkingDeptSettingsCloseBtn').addEventListener('click', showParkingDeptList);
@@ -4168,6 +4184,29 @@
 
         // --- Search orchestration ------------------------------------------
 
+        // Fetches one issue's comments, checks them for a parking-dept
+        // referral, and writes the result back to Firestore -- flagged, or
+        // just a fresh parkingDeptLastCheckedAt so it sinks to the back of
+        // the oldest-checked-first queue. Shared by the bulk Search scan
+        // below and the manual "Check Issue #" lookup (runParkingDeptCheckById).
+        async function checkAndFlagParkingDeptIssue(issueId, uid) {
+            const comments = await fetchAllIssueComments(issueId);
+            const { matched, method } = await issueHasParkingDeptReferral(comments);
+            const now = new Date().toISOString();
+            if (matched) {
+                await historyCollection(uid).doc(String(issueId)).update({
+                    parkingDeptFlag: 'flagged',
+                    parkingDeptFlaggedAt: now,
+                    parkingDeptMatchMethod: method,
+                    parkingDeptLastCheckedAt: now,
+                });
+                logToConsole(`[parking dept] Issue #${issueId} flagged (${method} match).`);
+            } else {
+                await historyCollection(uid).doc(String(issueId)).update({ parkingDeptLastCheckedAt: now });
+            }
+            return matched;
+        }
+
         // Scans up to `limit` not-yet-flagged/lettered/notified/dismissed,
         // non-suppressed issues (suppressed reports never got a real
         // SeeClickFix ticket -- nothing to fetch comments from), oldest-
@@ -4196,21 +4235,7 @@
                 const entry = candidates[i];
                 if (statusEl) statusEl.textContent = `Checking ${i + 1} of ${candidates.length} (#${entry.issueId})...`;
                 try {
-                    const comments = await fetchAllIssueComments(entry.issueId);
-                    const { matched, method } = await issueHasParkingDeptReferral(comments);
-                    const now = new Date().toISOString();
-                    if (matched) {
-                        await historyCollection(uid).doc(String(entry.issueId)).update({
-                            parkingDeptFlag: 'flagged',
-                            parkingDeptFlaggedAt: now,
-                            parkingDeptMatchMethod: method,
-                            parkingDeptLastCheckedAt: now,
-                        });
-                        flaggedCount++;
-                        logToConsole(`[parking dept] Issue #${entry.issueId} flagged (${method} match).`);
-                    } else {
-                        await historyCollection(uid).doc(String(entry.issueId)).update({ parkingDeptLastCheckedAt: now });
-                    }
+                    if (await checkAndFlagParkingDeptIssue(entry.issueId, uid)) flaggedCount++;
                 } catch (err) {
                     logToConsole(`[parking dept] Could not check issue #${entry.issueId}: ${err instanceof Error ? err.message : err}`, true);
                 }
@@ -4231,6 +4256,42 @@
             } catch (err) {
                 status.textContent = 'Search failed -- check debug console.';
                 logToConsole(`Parking Dept search failed: ${err instanceof Error ? err.message : err}`, true);
+            }
+            btn.disabled = false;
+        }
+
+        // Checks a single issue right now, regardless of where it sits in
+        // the oldest-checked-first Search queue -- for when a specific
+        // report (e.g. one you just got a comment on) shouldn't have to
+        // wait behind searchCapPerRun's 15-per-tap backlog. Only works for
+        // issues already in your report history (it writes the flag back
+        // to that same Firestore doc), and re-checks even if already
+        // flagged/dismissed, since this is an explicit one-off lookup.
+        async function runParkingDeptCheckById() {
+            const input = document.getElementById('parkingDeptCheckIssueInput');
+            const status = document.getElementById('parkingDeptSearchStatus');
+            const btn = document.getElementById('parkingDeptCheckIssueBtn');
+            const issueId = input.value.trim();
+            if (!issueId) return;
+
+            const entry = historyCache.find((e) => String(e.issueId) === issueId);
+            if (!entry) {
+                status.textContent = `Issue #${issueId} isn't in your report history -- can't check it.`;
+                return;
+            }
+
+            btn.disabled = true;
+            status.textContent = `Checking #${issueId}...`;
+            try {
+                const uid = currentUid || await historySignedIn;
+                const matched = await checkAndFlagParkingDeptIssue(issueId, uid);
+                status.textContent = matched
+                    ? `Issue #${issueId} flagged -- referral found.`
+                    : `Issue #${issueId} checked -- no referral found in its comments.`;
+                input.value = '';
+            } catch (err) {
+                status.textContent = 'Check failed -- see debug console.';
+                logToConsole(`Parking Dept check of #${issueId} failed: ${err instanceof Error ? err.message : err}`, true);
             }
             btn.disabled = false;
         }
