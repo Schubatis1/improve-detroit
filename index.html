@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.19.0)</title>
+    <title>You Can't Park There (v3.20.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -547,7 +547,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.19.0</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.20.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -615,18 +615,38 @@
         <div id="statsContent" class="flex flex-col gap-3"></div>
     </div>
 
+    <!-- Report Map fly-in: opened from the "Report Map" tile in the Stats
+         tab (see openStatsMap()). A full-screen overlay rather than an
+         inline map in statsContent because statsContent is rebuilt wholesale
+         on every renderStats() call (tab switches, range changes, every
+         Firestore snapshot) -- an inline Leaflet instance would need to be
+         torn down and reinitialized on each of those for no benefit, same
+         reasoning as itemFlyInScreen/historyFlyInMap. -->
+    <div id="statsMapScreen" class="hidden fixed inset-0 bg-[#eef7f5] z-[55] flex flex-col p-4">
+        <div class="flex justify-between items-center mb-2">
+            <h2 class="text-lg font-montserrat font-extrabold text-detroit-dark">Report Map</h2>
+            <button id="statsMapCloseBtn" aria-label="Close" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark">&times;</button>
+        </div>
+        <p id="statsMapSubtitle" class="text-xs text-slate-500"></p>
+        <p class="text-[10px] text-slate-400 mb-2 flex items-center gap-3">
+            <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#1d3a6b"></span>At a geofence</span>
+            <span class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#19a696"></span>Other report</span>
+        </p>
+        <div id="statsMapWrap" class="flex-grow rounded-lg overflow-hidden border border-detroit-mint"></div>
+    </div>
+
     <!-- ON-SCREEN DEBUG CONSOLE: hidden by default, opened via the fly-in menu
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.19.0)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.20.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.19.0)...
+            App initialized (v3.20.0)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -638,13 +658,17 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.19.0';
+        const APP_VERSION = '3.20.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.20.0', date: '2026-08-09', notes: [
+                'Added a Report Map to the Stats tab -- tap the new "Report Map" tile to see every report in the current range plotted on a map, color-coded by whether it landed at a geofence.',
+                'Added four new geofences: Core City Park, RiverWalk -- Milliken State Park & Harbor, RiverWalk -- parking lot, and UM Center for Innovation construction parking. 28 past reports were linked to them retroactively.',
+            ] },
             { version: '3.19.0', date: '2026-08-08', notes: [
                 'The Stats tab activity heatmap now shows a full calendar year (Jan-Dec) instead of just the last 12 weeks, with month labels and prev/next buttons to browse past years.',
             ] },
@@ -1256,6 +1280,12 @@
         let historyFlyInMap = null;
         let historyFlyInMarker = null;
 
+        // Report Map fly-in (opened from the Stats tab) -- see openStatsMap().
+        const statsMapScreen = document.getElementById('statsMapScreen');
+        const statsMapCloseBtn = document.getElementById('statsMapCloseBtn');
+        const statsMapSubtitle = document.getElementById('statsMapSubtitle');
+        let statsMap = null;
+
         function closeItemFlyIn() {
             itemFlyInScreen.classList.add('hidden');
             if (historyFlyInMap) { historyFlyInMap.remove(); historyFlyInMap = null; }
@@ -1265,6 +1295,63 @@
             currentFlyInKind = null;
         }
         itemFlyInCloseBtn.addEventListener('click', closeItemFlyIn);
+
+        function closeStatsMap() {
+            statsMapScreen.classList.add('hidden');
+            if (statsMap) { statsMap.remove(); statsMap = null; }
+        }
+        statsMapCloseBtn.addEventListener('click', closeStatsMap);
+
+        // Plots every historyCache entry in the current stats range (see
+        // isInStatsRange/statsRange) that has a resolved lat/lng -- native
+        // GPS for reports submitted through the app's camera flow, or a
+        // geocoded street address for older imports (see latLngSource).
+        // Rebuilt fresh on every open rather than kept mounted, same
+        // reasoning as historyFlyInMap: Leaflet doesn't tolerate its
+        // container being hidden/reflowed, and this map's data (statsRange)
+        // can change between opens anyway.
+        function openStatsMap() {
+            const inRange = historyCache.filter((e) => isInStatsRange(e, statsRange) && Number.isFinite(e.lat) && Number.isFinite(e.lng));
+            const missingCoords = historyCache.filter((e) => isInStatsRange(e, statsRange)).length - inRange.length;
+            const rangeLabel = statsRange === 'month' ? 'this month' : statsRange === 'year' ? 'this year' : 'all time';
+
+            statsMapSubtitle.textContent = inRange.length === 0
+                ? `No mapped reports ${rangeLabel}.`
+                : `${inRange.length} report${inRange.length === 1 ? '' : 's'} ${rangeLabel}${missingCoords > 0 ? ` (${missingCoords} without a location on file)` : ''}`;
+
+            statsMapScreen.classList.remove('hidden');
+            if (statsMap) { statsMap.remove(); statsMap = null; }
+            if (inRange.length === 0) return;
+
+            statsMap = L.map(document.getElementById('statsMapWrap'));
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors',
+                maxZoom: 19,
+            }).addTo(statsMap);
+
+            const markers = inRange.map((entry) => {
+                const marker = L.circleMarker([entry.lat, entry.lng], {
+                    radius: 6,
+                    color: entry.geofenceId ? '#1d3a6b' : '#19a696',
+                    weight: 2,
+                    fillColor: entry.geofenceId ? '#1d3a6b' : '#19a696',
+                    fillOpacity: 0.5,
+                }).addTo(statsMap);
+                const when = new Date(entry.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                marker.bindPopup(`<strong>${escapeHtml(entry.address || 'Unknown address')}</strong><br>${when} &middot; ${escapeHtml(entry.status || '')}`);
+                return marker;
+            });
+
+            if (markers.length === 1) {
+                statsMap.setView(markers[0].getLatLng(), 16);
+            } else {
+                statsMap.fitBounds(L.featureGroup(markers).getBounds().pad(0.15));
+            }
+            // Leaflet computes tile layout from the container's size at init
+            // time -- the fly-in was just unhidden this same tick, so its
+            // layout isn't settled yet without an explicit nudge.
+            setTimeout(() => statsMap && statsMap.invalidateSize(), 50);
+        }
 
         // Opens a queue item's full editable field set (built once by
         // mountItemCard as item.detailWrapper) inside the shared fly-in.
@@ -3727,6 +3814,16 @@
                         <p class="text-[10px] uppercase text-slate-500 font-semibold">Repeat Geofences</p>
                     </div>
                 </div>
+
+                <button type="button" onclick="openStatsMap()" class="bg-white rounded-lg shadow-sm p-3 flex items-center justify-between gap-3 text-left hover:shadow-md transition">
+                    <div class="min-w-0">
+                        <p class="text-sm font-montserrat font-bold text-detroit-dark">🗺️ Report Map</p>
+                        <p class="text-[10px] text-slate-500">${inRange.filter((e) => Number.isFinite(e.lat) && Number.isFinite(e.lng)).length} report${inRange.length === 1 ? '' : 's'} mapped ${escapeHtml(rangeLabel)}</p>
+                    </div>
+                    <svg class="w-4 h-4 text-slate-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                </button>
 
                 <div class="bg-white rounded-lg shadow-sm p-3">
                     <p class="text-lg font-montserrat font-bold text-detroit-dark">🔥 ${currentStreak}-day streak</p>
