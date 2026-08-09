@@ -119,6 +119,11 @@ window.APP_CONFIG = {
         // a real example: "...Car gone on arrival. No violations at this
         // time. City of Detroit Municipal Parking Department Enforcement
         // phone number is 313-221-2558."
+        //
+        // Also checked (see commentMatchesParkingDeptPhone in index.html):
+        // any comment containing parkingDeptPhone's digits, regardless of
+        // punctuation -- officers sometimes leave just the number without
+        // the "Municipal Parking Department" phrase.
         keywordTriggers: [
             'Municipal Parking Department',
         ],
