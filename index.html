@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.21.1)</title>
+    <title>You Can't Park There (v3.22.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -74,9 +74,16 @@
 </head>
 <body class="bg-[#eef7f5] p-4 font-sans text-detroit-dark max-w-md mx-auto min-h-screen flex flex-col">
 
-    <!-- Fly-in menu toggle -->
+    <!-- Fly-in menu toggle. `left` matches the app column's own left edge
+         (body is max-w-md/28rem, centered) instead of the raw viewport
+         corner -- plain `left-4` alone left this stranded in the far
+         top-left of the window on anything wider than a phone, nowhere
+         near the actual (centered) app content below it. The max() falls
+         back to the original left-4 once the viewport is narrow enough
+         that body isn't centered anymore (<=28rem), so mobile is
+         pixel-identical to before. -->
     <button id="menuToggleBtn" aria-label="Open menu"
-            class="fixed top-4 left-4 z-40 bg-white rounded-lg shadow-md p-2 text-detroit-dark hover:text-detroit-teal">
+            class="fixed top-4 left-[max(1rem,calc(50%-13rem))] z-40 bg-white rounded-lg shadow-md p-2 text-detroit-dark hover:text-detroit-teal">
         <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
         </svg>
@@ -113,8 +120,18 @@
          the same panel -- #geofenceListView (the list + "Add Geofence") and
          #geofenceFormView (add/edit form) -- toggled via showGeofenceList()/
          showGeofenceForm(). Geofences live in Firestore
-         (users/{uid}/geofences); see initGeofencesSync/renderGeofenceList. -->
-    <div id="geofenceScreen" class="hidden fixed inset-0 bg-[#eef7f5] z-[55] flex flex-col p-4 overflow-y-auto">
+         (users/{uid}/geofences); see initGeofencesSync/renderGeofenceList.
+
+         Desktop: `fixed inset-0` alone made this (and every other
+         full-screen overlay below -- itemFlyInScreen, parkingDeptScreen,
+         releaseNotesScreen, statsMapScreen) stretch edge-to-edge across
+         the whole browser window on a wide monitor, with giant
+         full-width buttons/inputs -- fine full-bleed on a phone, broken
+         on desktop. The md: classes turn it into a centered, card-styled
+         ~60rem panel with breathing room above/below once there's room
+         for one (inset-x's max() falls back to 0, i.e. edge-to-edge,
+         below ~60rem+margins of viewport width); untouched on mobile. -->
+    <div id="geofenceScreen" class="hidden fixed inset-0 md:inset-x-[max(0px,calc(50%-30rem))] md:inset-y-6 md:rounded-2xl md:shadow-2xl md:border md:border-black/5 md:bg-white bg-[#eef7f5] z-[55] flex flex-col p-4 overflow-y-auto">
         <div id="geofenceListView">
             <div class="flex justify-between items-center mb-4">
                 <h2 class="text-lg font-montserrat font-extrabold text-detroit-dark">Geofence Maintenance</h2>
@@ -123,7 +140,7 @@
             <button id="geofenceAddBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition mb-4">
                 + Add Geofence
             </button>
-            <div id="geofenceList" class="flex flex-col gap-2"></div>
+            <div id="geofenceList" class="flex flex-col gap-2 md:grid md:grid-cols-2 md:gap-3"></div>
         </div>
 
         <div id="geofenceFormView" class="hidden">
@@ -242,8 +259,14 @@
          or history summary card (see mountItemCard/openQueueItemFlyIn for
          queue cards, renderHistory/openHistoryFlyIn for submitted reports).
          One shared shell -- only one report is ever being edited at a time.
-         Same overlay pattern as #geofenceScreen/#releaseNotesScreen. -->
-    <div id="itemFlyInScreen" class="hidden fixed inset-0 bg-[#eef7f5] z-[55] flex flex-col p-4 overflow-y-auto">
+
+         Desktop: unlike #geofenceScreen/#parkingDeptScreen/etc (which show
+         lists and get a centered wide card), this is always a SINGLE
+         record's detail view -- so instead it becomes a right-anchored
+         panel flush to the top/right/bottom edges, half the viewport
+         wide, like a reading/detail pane rather than a dialog. Same
+         `hidden`/`fixed inset-0` mobile behavior as the others. -->
+    <div id="itemFlyInScreen" class="hidden fixed inset-0 md:left-1/2 md:shadow-2xl md:border-l md:border-black/10 md:bg-white bg-[#eef7f5] z-[55] flex flex-col p-4 overflow-y-auto">
         <div class="flex justify-between items-center mb-4">
             <h2 id="itemFlyInTitle" class="text-lg font-montserrat font-extrabold text-detroit-dark truncate pr-2">Report</h2>
             <button id="itemFlyInCloseBtn" aria-label="Close" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark flex-shrink-0">&times;</button>
@@ -261,7 +284,7 @@
          via showParkingDeptList()/showParkingDeptSettings(). See
          initGeofencesSync-style comments in the JS for the Firestore
          collections this reads/writes (parkingDeptLetters, settings). -->
-    <div id="parkingDeptScreen" class="hidden fixed inset-0 bg-[#eef7f5] z-[55] flex flex-col p-4 overflow-y-auto">
+    <div id="parkingDeptScreen" class="hidden fixed inset-0 md:inset-x-[max(0px,calc(50%-30rem))] md:inset-y-6 md:rounded-2xl md:shadow-2xl md:border md:border-black/5 md:bg-white bg-[#eef7f5] z-[55] flex flex-col p-4 overflow-y-auto">
         <div id="parkingDeptListView">
             <div class="flex justify-between items-center mb-4">
                 <h2 class="text-lg font-montserrat font-extrabold text-detroit-dark">Notify Parking Dept</h2>
@@ -290,7 +313,7 @@
             </button>
 
             <h3 class="text-xs font-bold text-detroit-navy uppercase mb-2 px-1">Candidates</h3>
-            <div id="parkingDeptCandidates" class="flex flex-col gap-2 mb-4"></div>
+            <div id="parkingDeptCandidates" class="flex flex-col gap-2 mb-4 md:grid md:grid-cols-2 md:gap-3"></div>
 
             <button id="parkingDeptGenerateBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition">
                 Generate Letter
@@ -298,7 +321,7 @@
             <p id="parkingDeptGenerateMsg" class="text-center text-xs font-medium mt-2 mb-4"></p>
 
             <h3 class="text-xs font-bold text-detroit-navy uppercase mb-2 px-1">Letters Awaiting Notification</h3>
-            <div id="parkingDeptLetters" class="flex flex-col gap-2 pb-8"></div>
+            <div id="parkingDeptLetters" class="flex flex-col gap-2 pb-8 md:grid md:grid-cols-2 md:gap-3"></div>
         </div>
 
         <div id="parkingDeptSettingsView" class="hidden">
@@ -333,7 +356,7 @@
     </div>
 
     <!-- Release Notes: read-only, rendered from the RELEASE_NOTES const below. -->
-    <div id="releaseNotesScreen" class="hidden fixed inset-0 bg-[#eef7f5] z-[55] flex flex-col p-4 overflow-y-auto">
+    <div id="releaseNotesScreen" class="hidden fixed inset-0 md:inset-x-[max(0px,calc(50%-30rem))] md:inset-y-6 md:rounded-2xl md:shadow-2xl md:border md:border-black/5 md:bg-white bg-[#eef7f5] z-[55] flex flex-col p-4 overflow-y-auto">
         <div class="flex justify-between items-center mb-4">
             <h2 class="text-lg font-montserrat font-extrabold text-detroit-dark">Release Notes</h2>
             <button id="releaseNotesCloseBtn" aria-label="Close" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark">&times;</button>
@@ -561,7 +584,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.21.1</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.22.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -636,7 +659,7 @@
          Firestore snapshot) -- an inline Leaflet instance would need to be
          torn down and reinitialized on each of those for no benefit, same
          reasoning as itemFlyInScreen/historyFlyInMap. -->
-    <div id="statsMapScreen" class="hidden fixed inset-0 bg-[#eef7f5] z-[55] flex flex-col p-4">
+    <div id="statsMapScreen" class="hidden fixed inset-0 md:inset-x-[max(0px,calc(50%-30rem))] md:inset-y-6 md:rounded-2xl md:shadow-2xl md:border md:border-black/5 md:bg-white bg-[#eef7f5] z-[55] flex flex-col p-4">
         <div class="flex justify-between items-center mb-2">
             <h2 class="text-lg font-montserrat font-extrabold text-detroit-dark">Report Map</h2>
             <button id="statsMapCloseBtn" aria-label="Close" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark">&times;</button>
@@ -653,14 +676,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.21.1)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.22.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.21.1)...
+            App initialized (v3.22.0)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -672,13 +695,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.21.1';
+        const APP_VERSION = '3.22.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.22.0', date: '2026-08-09', notes: [
+                'Desktop layout pass: the hamburger button no longer floats away from the app in the far corner of a wide window; every full-screen overlay (Geofence Maintenance, Notify Parking Dept, Release Notes, Report Map) is now a centered, card-styled panel instead of stretching edge-to-edge; a report\'s own detail view opens as a half-width side panel rather than a full-width dialog; and Geofence Maintenance / Notify Parking Dept show their lists in two columns when there\'s room. Phones are unaffected -- all of this only kicks in once the window is wide enough to matter.',
+            ] },
             { version: '3.21.1', date: '2026-08-09', notes: [
                 'The browser tab/bookmark favicon now uses the same artwork as the iOS "Add to Home Screen" icon, instead of a generic default.',
             ] },
