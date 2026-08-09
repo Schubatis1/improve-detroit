@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.25.0)</title>
+    <title>You Can't Park There (v3.25.1)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -139,6 +139,10 @@
         <button id="releaseNotesMenuBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Release Notes
         </button>
+        <button id="refreshAllBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2 disabled:opacity-50 disabled:hover:text-detroit-navy">
+            Refresh All Statuses &amp; Comments
+        </button>
+        <p id="refreshAllStatus" class="text-[10px] text-slate-400 -mt-1 mb-1"></p>
         <button id="debugToggleBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Show Debug Console
         </button>
@@ -619,7 +623,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.25.0</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.25.1</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -779,14 +783,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.25.0)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.25.1)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.25.0)...
+            App initialized (v3.25.1)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -798,13 +802,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.25.0';
+        const APP_VERSION = '3.25.1';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.25.1', date: '2026-08-09', notes: [
+                'Added "Refresh All Statuses & Comments" to the hamburger menu -- refreshes Improve Detroit status and re-fetches comments for every report in one go, instead of opening each one\'s fly-in individually.',
+            ] },
             { version: '3.25.0', date: '2026-08-09', notes: [
                 'A report\'s fly-in now shows its comments from Improve Detroit, with the commenter\'s name/role and timestamp. Fetched once and cached (in Firestore and, via the existing local mirror, on-device too), so reopening the same report doesn\'t re-query Improve Detroit -- tap Refresh to pull anything new.',
             ] },
@@ -1421,6 +1428,11 @@
             releaseNotesScreen.classList.remove('hidden');
         });
         releaseNotesCloseBtn.addEventListener('click', () => releaseNotesScreen.classList.add('hidden'));
+
+        // "Refresh All" deliberately does NOT call closeMenu() -- unlike
+        // the other menu buttons, its whole point is watching
+        // #refreshAllStatus's progress text update in place while it runs.
+        document.getElementById('refreshAllBtn').addEventListener('click', refreshAllStatusesAndComments);
 
         function renderReleaseNotes() {
             document.getElementById('releaseNotesList').innerHTML = RELEASE_NOTES.map((entry) => `
@@ -4298,22 +4310,30 @@
             `;
         }
 
+        // Raw SeeClickFix status lookup, shared by refreshHistoryStatus
+        // (one issue, from its own fly-in) and refreshAllStatusesAndComments
+        // (every issue, from the hamburger menu). Throws on failure --
+        // callers decide what "couldn't check this one" means for them.
+        async function fetchIssueStatus(issueId) {
+            const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}`;
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+            const response = await fetch(proxyUrl, {
+                headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` }
+            });
+            if (!response.ok) {
+                throw new Error(`Status check failed: ${response.status}`);
+            }
+            const data = await response.json();
+            return data.status;
+        }
+
         async function refreshHistoryStatus(idx) {
             const entry = historyCache[idx];
             if (!entry || entry.suppressed) return; // no real SeeClickFix ticket to check (button isn't rendered for these anyway)
 
             logToConsole(`Checking status for issue #${entry.issueId}...`);
             try {
-                const targetUrl = `https://seeclickfix.com/api/v2/issues/${entry.issueId}`;
-                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
-                const response = await fetch(proxyUrl, {
-                    headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` }
-                });
-                if (!response.ok) {
-                    throw new Error(`Status check failed: ${response.status}`);
-                }
-                const data = await response.json();
-                const status = data.status || entry.status;
+                const status = (await fetchIssueStatus(entry.issueId)) || entry.status;
                 try {
                     const uid = currentUid || await historySignedIn;
                     await historyCollection(uid).doc(String(entry.issueId)).update({ status });
@@ -4328,6 +4348,57 @@
             } catch (err) {
                 logToConsole(err, true);
             }
+        }
+
+        // Hamburger menu -> "Refresh All Statuses & Comments": refreshes
+        // Improve Detroit status and force-refetches comments (see
+        // loadIssueComments) for every non-suppressed history entry --
+        // e.g. after being away for a while and wanting everything caught
+        // up at once, rather than opening each report's fly-in one at a
+        // time. Sequential, not parallel, same reasoning as
+        // searchParkingDeptCandidates: keeps the debug console legible
+        // and avoids hammering the shared free corsproxy.io proxy every
+        // SeeClickFix call in this app depends on -- a run can take a
+        // while with a large history. Each issue's status/comments fetch
+        // is independently wrapped in try/catch so one bad ticket can't
+        // abort the rest, and iterates a snapshot of historyCache taken
+        // up front so mid-run Firestore updates (from this very function)
+        // can't shift indices out from under it.
+        async function refreshAllStatusesAndComments() {
+            const btn = document.getElementById('refreshAllBtn');
+            const statusEl = document.getElementById('refreshAllStatus');
+            const entries = historyCache.filter((e) => !e.suppressed);
+            if (entries.length === 0) {
+                statusEl.textContent = 'No reports to refresh.';
+                return;
+            }
+
+            btn.disabled = true;
+            const uid = currentUid || await historySignedIn;
+            let statusOk = 0;
+            let commentsOk = 0;
+            for (let i = 0; i < entries.length; i++) {
+                const entry = entries[i];
+                statusEl.textContent = `Refreshing ${i + 1} of ${entries.length} (#${entry.issueId})...`;
+                try {
+                    const status = await fetchIssueStatus(entry.issueId);
+                    if (status) {
+                        await historyCollection(uid).doc(String(entry.issueId)).update({ status });
+                    }
+                    statusOk++;
+                } catch (err) {
+                    logToConsole(`Refresh All: could not refresh status for #${entry.issueId}: ${err instanceof Error ? err.message : err}`, true);
+                }
+                try {
+                    await loadIssueComments(entry, uid, true);
+                    commentsOk++;
+                } catch (err) {
+                    logToConsole(`Refresh All: could not refresh comments for #${entry.issueId}: ${err instanceof Error ? err.message : err}`, true);
+                }
+            }
+            statusEl.textContent = `Done -- ${statusOk}/${entries.length} statuses, ${commentsOk}/${entries.length} comment threads refreshed.`;
+            logToConsole(`Refresh All complete: ${statusOk}/${entries.length} statuses, ${commentsOk}/${entries.length} comment threads.`);
+            btn.disabled = false;
         }
 
         // ==========================================
