@@ -802,13 +802,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.25.1';
+        const APP_VERSION = '3.25.2';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.25.2', date: '2026-08-10', notes: [
+                'The scheduled Bike Lane Uprising submitter now runs twice a day (10am and 8pm Detroit time) instead of once overnight, and pauses a random 30-121 seconds between each submission.',
+            ] },
             { version: '3.25.1', date: '2026-08-09', notes: [
                 'Added "Refresh All Statuses & Comments" to the hamburger menu -- refreshes Improve Detroit status and re-fetches comments for every report in one go, instead of opening each one\'s fly-in individually.',
             ] },
