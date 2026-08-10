@@ -6,7 +6,8 @@
  * Wix/Cognito auth exchange. Meant to run on a schedule (see
  * .github/workflows/submit-to-blu.yml); safe to re-run since it only acts
  * on Firestore history entries with bluStatus == "pending" and always
- * updates that field afterward.
+ * updates that field afterward. Pauses a random 30-121s between each real
+ * submission so requests to BLU aren't back-to-back.
  *
  * Env vars:
  *   BLU_EMAIL, BLU_PASSWORD       -- your bikelaneuprising.com login
@@ -81,6 +82,17 @@ function detroitDateParts(date) {
         minute: get('minute'),
         ampm: get('dayPeriod').toUpperCase(),
     };
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Random pause between submissions so requests to BLU don't land back-to-back.
+function randomSubmissionDelayMs() {
+    const minSeconds = 30;
+    const maxSeconds = 121;
+    return (minSeconds + Math.random() * (maxSeconds - minSeconds)) * 1000;
 }
 
 async function downloadToTempFile(url, destPath) {
@@ -310,7 +322,7 @@ async function main() {
         await loginToBlu(page, email, password);
         console.log('Logged into Bike Lane Uprising.');
 
-        for (const doc of snapshot.docs) {
+        for (const [index, doc] of snapshot.docs.entries()) {
             const issueId = doc.id;
             const entry = doc.data();
             console.log(`Submitting #${issueId}...`);
@@ -351,6 +363,12 @@ async function main() {
 
                 await doc.ref.set({ bluStatus: 'submitted', bluSubmittedAt: new Date().toISOString() }, { merge: true });
                 console.log(`  Submitted #${issueId}.`);
+
+                if (index < snapshot.docs.length - 1) {
+                    const delayMs = randomSubmissionDelayMs();
+                    console.log(`  Pausing ${Math.round(delayMs / 1000)}s before next submission...`);
+                    await sleep(delayMs);
+                }
             } catch (err) {
                 console.error(`  Failed to submit #${issueId}: ${err.message}`);
                 if (!args.dryRun) {

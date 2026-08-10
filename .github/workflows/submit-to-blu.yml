@@ -2,14 +2,15 @@ name: Submit pending reports to Bike Lane Uprising
 
 on:
   schedule:
-    # Once daily at 3am Eastern. Fixed UTC, so this drifts to 2am local
-    # once clocks fall back to EST in November (flip to '0 8 * * *' then,
-    # and back to '0 7 * * *' when EDT resumes in March) -- GitHub Actions
-    # cron has no timezone awareness. BLU has no public API, so this drives
-    # their real submit form with Playwright -- see scripts/submit-to-blu.js.
-    # Verified end to end via a real non-dry-run submission (issue
-    # #22393136, confirmed live on bikelaneuprising.com) before enabling.
-    - cron: '0 7 * * *'
+    # Twice daily at 10am and 8pm Eastern (Detroit). Fixed UTC, so these
+    # drift an hour once clocks fall back to EST in November -- flip to
+    # '0 15,1 * * *' then, and back to '0 14,0 * * *' when EDT resumes in
+    # March -- GitHub Actions cron has no timezone awareness. BLU has no
+    # public API, so this drives their real submit form with Playwright --
+    # see scripts/submit-to-blu.js. Verified end to end via a real
+    # non-dry-run submission (issue #22393136, confirmed live on
+    # bikelaneuprising.com) before enabling.
+    - cron: '0 14,0 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
