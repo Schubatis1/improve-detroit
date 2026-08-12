@@ -802,13 +802,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.25.2';
+        const APP_VERSION = '3.26.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.26.0', date: '2026-08-12', notes: [
+                'Vehicle reports now have a Geofence field near the top of the editor showing which geofence, if any, was auto-matched by location -- change it to a different geofence or "None" if the violation isn\'t actually related to it, and Summary, Description, Nature of Issue, and BLU Category update to match.',
+            ] },
             { version: '3.25.2', date: '2026-08-10', notes: [
                 'The scheduled Bike Lane Uprising submitter now runs twice a day (10am and 8pm Detroit time) instead of once overnight, and pauses a random 30-121 seconds between each submission.',
             ] },
@@ -1173,6 +1176,56 @@
                 if (geofence.improveDetroitCategory) workflow.natureValue = geofence.improveDetroitCategory;
             }
             return { workflow, geofence };
+        }
+
+        // Re-derives and re-applies a workflow when the user manually
+        // overrides the Geofence field on an already-processed vehicle
+        // report -- the fix for a photo that happens to land inside a
+        // geofence's radius (e.g. Times Square) without actually being that
+        // geofence's kind of violation (a bus double-parked across the
+        // street, say). Rebuilds the workflow the same way resolveWorkflow
+        // does, then re-applies it the same way processQueueItem's initial
+        // population does. Only touches Summary/Description/Nature of Issue
+        // while Description still holds its auto-filled value -- same
+        // stillAutoFilled guard as applyPlateWorkflow -- so switching this
+        // dropdown never clobbers text the user has already started
+        // editing. BLU Category has no free-text equivalent of "already
+        // edited", so it's always re-applied (or reset to the first option,
+        // matching what a non-geofenced photo shows by default).
+        function applyGeofenceSelection(item, geofenceId) {
+            const geofence = geofenceId ? geofencesCache.find((g) => g.id === geofenceId) || null : null;
+            const workflow = { ...CONFIG.defaultWorkflow };
+            if (geofence) {
+                if (geofence.message) workflow.descriptions = [geofence.message];
+                if (geofence.bluCategory) workflow.bluCategory = geofence.bluCategory;
+                if (geofence.improveDetroitCategory) workflow.natureValue = geofence.improveDetroitCategory;
+                if (geofence.detectRepeatIncidents !== false) {
+                    const priorComplaintIds = getPriorComplaintIdsForGeofence(geofence.id);
+                    if (priorComplaintIds.length > 0 && geofence.reportRepeatIncidents !== false) {
+                        workflow.priorComplaintIds = priorComplaintIds;
+                    }
+                }
+            }
+            if (item.matchedPlateRule) Object.assign(workflow, item.matchedPlateRule.workflow);
+
+            logToConsole(`[${item.file.name}] Geofence manually set to ${geofence ? `"${geofence.name}"` : 'None'} -- re-applying its workflow.`);
+            item.matchedGeofence = geofence;
+            item.els.bluCategory.value = workflow.bluCategory || CONFIG.bluCategories[0];
+
+            const stillAutoFilled = item.els.description.value === item.autoDescriptionValue;
+            if (!stillAutoFilled) {
+                logToConsole(`[${item.file.name}] Description was already edited -- not overwriting Summary/Description/Nature of Issue.`);
+                return;
+            }
+
+            const address = item.els.address.value.trim();
+            const autoDescription = (!geofence && item.classificationDescription)
+                ? item.classificationDescription
+                : pickRandomDescription(workflow, address);
+            item.autoDescriptionValue = autoDescription;
+            item.els.description.value = autoDescription;
+            item.els.summary.value = workflow.summary;
+            if (item.natureValues) item.els.nature.value = pickNatureValue(item.natureValues, workflow);
         }
 
         // Normalizes a detected plate for matching against config.plateRules.
@@ -1876,6 +1929,12 @@
                 <div data-role="mapWrap" class="rounded-lg overflow-hidden border border-detroit-mint" style="height:160px"></div>
                 <p class="text-[10px] text-slate-400 font-mono" data-role="coords">--</p>
 
+                <div data-role="geofenceWrap" class="hidden">
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Geofence</label>
+                    <select data-role="geofence" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1"></select>
+                    <p class="text-[10px] text-slate-400 mt-1">Auto-matched by location. If this violation isn't actually related to that geofence, change it or set it to None -- Summary, Description, Nature of Issue, and BLU Category below will update to match.</p>
+                </div>
+
                 <div>
                     <label class="text-xs font-bold text-detroit-navy uppercase">Summary</label>
                     <input type="text" data-role="summary" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
@@ -1949,6 +2008,8 @@
                 address: detail.querySelector('[data-role="address"]'),
                 mapWrap: detail.querySelector('[data-role="mapWrap"]'),
                 coords: detail.querySelector('[data-role="coords"]'),
+                geofenceWrap: detail.querySelector('[data-role="geofenceWrap"]'),
+                geofence: detail.querySelector('[data-role="geofence"]'),
                 summary: detail.querySelector('[data-role="summary"]'),
                 description: detail.querySelector('[data-role="description"]'),
                 natureWrap: detail.querySelector('[data-role="natureWrap"]'),
@@ -1972,6 +2033,7 @@
             item.els.nature.addEventListener('change', () => {
                 item.els.natureCustom.classList.toggle('hidden', item.els.nature.value !== '__custom__');
             });
+            item.els.geofence.addEventListener('change', () => applyGeofenceSelection(item, item.els.geofence.value));
             item.els.suppressReport.addEventListener('change', () => updateSubmitBtnLabel(item));
             item.els.submitBtn.addEventListener('click', () => submitItem(item));
             item.els.thumbnail.addEventListener('click', (e) => {
@@ -2091,6 +2153,8 @@
                     item.els.nature.innerHTML = natureValues.map((v) =>
                         `<option value="${escapeHtml(v.key)}">${escapeHtml(v.name)}</option>`
                     ).join('') + '<option value="__custom__">Custom...</option>';
+                    item.natureValues = natureValues;
+                    item.classificationDescription = classification.description || null;
                     item.vehicleQuestionId = getVehicleInfoQuestionId(schema);
                     if (!item.vehicleQuestionId) {
                         logToConsole(`[${item.file.name}] Could not find the vehicle/plate question in the schema -- plate field will show but won't be submitted.`, true);
@@ -2143,6 +2207,10 @@
                     item.els.timingWrap.classList.remove('hidden');
                     item.els.plateWrap.classList.remove('hidden');
                     item.els.crossStreetsWrap.classList.add('hidden');
+
+                    item.els.geofenceWrap.classList.remove('hidden');
+                    item.els.geofence.innerHTML = geofenceOptionsHtml();
+                    item.els.geofence.value = geofence ? geofence.id : '';
 
                     item.els.plate.value = classification.plate ? classification.plate.toUpperCase() : '';
                     item.els.plate.placeholder = classification.plate ? '' : 'No plate detected';
@@ -2209,6 +2277,7 @@
                     item.els.vehicleWrap.classList.add('hidden');
                     item.els.plateWrap.classList.add('hidden');
                     item.els.crossStreetsWrap.classList.remove('hidden');
+                    item.els.geofenceWrap.classList.add('hidden');
 
                     logToConsole(`[${item.file.name}] Looking up nearest cross streets...`);
                     const crossStreets = await getCrossStreets(item.lat, item.lng);
@@ -2831,6 +2900,13 @@
             merged.els.nature.innerHTML = primary.els.nature.innerHTML;
             merged.els.nature.value = primary.els.nature.value;
             merged.els.natureCustom.value = primary.els.natureCustom.value;
+            merged.natureValues = primary.natureValues;
+            merged.classificationDescription = primary.classificationDescription;
+            merged.matchedPlateRule = primary.matchedPlateRule;
+            merged.autoDescriptionValue = primary.els.description.value;
+            merged.els.geofenceWrap.classList.remove('hidden');
+            merged.els.geofence.innerHTML = primary.els.geofence.innerHTML;
+            merged.els.geofence.value = primary.els.geofence.value;
             merged.els.timing.value = primary.els.timing.value;
             merged.els.plate.value = plates.join(', ');
             merged.els.plate.placeholder = plates.length === 0 ? 'No plate detected' : '';
