@@ -2416,6 +2416,27 @@
                     logToConsole(`Ticket #${data.id} was submitted, but local history couldn't be saved: ${historyErr instanceof Error ? historyErr.message : historyErr}`, true);
                 }
 
+                // "Combine Reports Into One" keeps every photo but the
+                // primary's here (see combineReports) rather than
+                // discarding them -- post them back as one follow-up
+                // comment so a combined report doesn't silently lose all
+                // but its main photo. Purely additive: any failure here
+                // only logs, it never touches item.status (see the note
+                // above about never downgrading a successful submission).
+                if (item.extraFiles && item.extraFiles.length) {
+                    try {
+                        const locations = [];
+                        for (const file of item.extraFiles.slice(0, 3)) {
+                            const uploaded = await uploadTransientFile(file);
+                            locations.push(uploaded.location);
+                        }
+                        await postIssueCommentWithPhotos(data.id, null, locations);
+                        logToConsole(`Posted ${locations.length} additional photo(s) as a comment on issue #${data.id}.`);
+                    } catch (extraErr) {
+                        logToConsole(`Issue #${data.id} was created, but its additional photo(s) could not be posted as a comment: ${extraErr instanceof Error ? extraErr.message : extraErr}`, true);
+                    }
+                }
+
             } catch (err) {
                 item.status = 'error';
                 logToConsole(err, true);
@@ -2459,6 +2480,11 @@
             const merged = {
                 id: nextId(),
                 file: primary.file,
+                // Kept so the merge doesn't silently drop every photo but
+                // the primary's -- submitItem posts these back as a
+                // follow-up comment on the issue once it's created. See
+                // uploadTransientFile/postIssueCommentWithPhotos.
+                extraFiles: sourceItems.slice(1).map((item) => item.file),
                 previewUrl: primary.previewUrl,
                 status: 'ready',
                 category: 'vehicle',
@@ -3683,6 +3709,59 @@
             if (!response.ok) {
                 const errText = await response.text();
                 throw new Error(`Comment post failed (${response.status}): ${errText}`);
+            }
+            return response.json();
+        }
+
+        // Uploads one photo to SeeClickFix's transient-file endpoint --
+        // an undocumented step (found by inspecting real web-portal
+        // traffic, see Secrets/ccc_comment_*.har) that's a prerequisite
+        // for attaching a photo to a comment: the comments endpoint takes
+        // an image URL, not a file, and this is what produces that URL.
+        // The captured traffic sent no auth header here at all, so none is
+        // sent here either -- unverified against this app's own Bearer
+        // token, but consistent with what was actually observed working.
+        async function uploadTransientFile(file) {
+            const targetUrl = 'https://seeclickfix.com/scf/v1/transient_files';
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+            const formData = new FormData();
+            formData.append('Content-Type', file.type);
+            formData.append('file', file);
+            const response = await fetch(proxyUrl, { method: 'POST', body: formData });
+            if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(`Photo upload failed (${response.status}): ${errText}`);
+            }
+            return response.json();
+        }
+
+        // Posts a comment carrying one or more photos, previously uploaded
+        // via uploadTransientFile. SeeClickFix's comment JSON takes photo
+        // URLs as separate fields -- image, image1, image2, ... (first one
+        // unsuffixed) -- rather than an array, per the captured traffic.
+        // Only tested there against the web-portal's own session auth; this
+        // reuses postIssueComment's Bearer-token auth instead since it's
+        // the same endpoint this app already calls successfully with it --
+        // smoke-test before relying on this at scale (see the "Notify
+        // Parking Dept" comment above postIssueComment).
+        async function postIssueCommentWithPhotos(issueId, commentText, photoLocationUrls) {
+            const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}/comments`;
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+            const body = { comment: commentText ?? null };
+            photoLocationUrls.forEach((url, i) => {
+                body[i === 0 ? 'image' : `image${i}`] = url;
+            });
+            const response = await fetch(proxyUrl, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${CONFIG.seeClickFix.token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(body),
+            });
+            if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(`Photo comment post failed (${response.status}): ${errText}`);
             }
             return response.json();
         }

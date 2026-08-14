@@ -136,10 +136,8 @@ window.APP_CONFIG = {
         geofenceSectionIntro: 'The following incident(s) occurred at {{GEOFENCE_NAME}}:',
         miscSectionHeading: 'Miscellaneous Parking Violations',
         repeatOffendersSectionHeading: 'Repeat Offenders',
-        // Posted back to SeeClickFix by "Mark as Notified" -- {{LETTER_DATE}}
-        // is always the letter's own stored generation date, never the date
-        // the comment is actually posted (which may be later).
-        notifyCommentTemplate: 'Notified the City of Detroit Municipal Parking Enforcement Department about this recurring bike lane obstruction on {{LETTER_DATE}}.',
+        // Posted back to SeeClickFix by "Mark as Notified".
+        notifyCommentTemplate: 'Thank you for the update. I have notified the Municipal Parking Department about this matter.',
     },
 
     // Checked once a plate is OCR'd from the photo. Each rule's `plates`
