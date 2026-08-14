@@ -1,0 +1,5 @@
+Secrets
+node_modules
+*.har
+scripts/dry-run
+improve-detroit-v3.17.0.bundle

@@ -2,3 +2,6 @@ node_modules/
 Secrets/
 *.har
 scripts/dry-run/
+
+.vercel
+.env*
