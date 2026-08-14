@@ -128,6 +128,13 @@ window.APP_CONFIG = {
             'Municipal Parking Department',
         ],
         parkingDeptPhone: '313-221-2558',
+        // Default prefill for the "Comments by user" detection mode (see
+        // Notify Parking Dept's method toggle in index.html) -- flags
+        // every issue with ANY comment from this SeeClickFix commenter
+        // name, regardless of wording, instead of matching boilerplate
+        // text. Editable per-search in the UI; this is just the starting
+        // value.
+        defaultForwardCommenterUsername: 'HawkinsB246',
         // Letter template text. {{DATE}}/{{GEOFENCE_NAME}}/{{LETTER_DATE}}
         // are filled in by buildParkingDeptLetterModel()/the docx builder.
         letterIntro: 'I am writing to follow up on a number of bicycle lane obstruction incidents I previously reported to the City of Detroit through the Improve Detroit system. In each case, the responding officer noted that the vehicle was gone on arrival and directed me to contact the City of Detroit Municipal Parking Department Enforcement directly, since no violation could be issued after the fact. I am providing the details below so that these recurring problem locations and vehicles can be addressed going forward.',

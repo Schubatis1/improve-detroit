@@ -327,6 +327,28 @@
                 <button id="parkingDeptCloseBtn" aria-label="Close" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark">&times;</button>
             </div>
 
+            <!-- Detection method used by both "Search for New Candidates"
+                 below and "Check Issue". "Boilerplate" is the original
+                 keyword/phone/Gemini algorithm looking for the City's
+                 "car gone on arrival" referral wording; "Comments by
+                 user" instead flags every issue with ANY comment from a
+                 given SeeClickFix commenter, regardless of wording --
+                 see detectParkingDeptMatch in the JS. -->
+            <div class="bg-white border border-slate-200 rounded-lg p-3 mb-3">
+                <p class="text-xs font-bold text-detroit-navy uppercase mb-2">Detection Method</p>
+                <div class="flex flex-col gap-1 text-sm text-detroit-dark mb-2">
+                    <label class="flex items-center gap-2">
+                        <input type="radio" name="parkingDeptDetectionMode" id="parkingDeptModeBoilerplate" value="boilerplate" checked>
+                        Boilerplate wording (keyword/phone, Gemini fallback)
+                    </label>
+                    <label class="flex items-center gap-2">
+                        <input type="radio" name="parkingDeptDetectionMode" id="parkingDeptModeCommenter" value="commenter">
+                        Any comment by a specific commenter
+                    </label>
+                </div>
+                <input type="text" id="parkingDeptCommenterUsername" placeholder="Commenter username" class="hidden w-full text-sm border border-detroit-mint rounded px-2 py-1">
+            </div>
+
             <button id="parkingDeptSearchBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition">
                 Search for New Candidates
             </button>
@@ -1523,6 +1545,12 @@
         parkingDeptCloseBtn.addEventListener('click', () => parkingDeptScreen.classList.add('hidden'));
         document.getElementById('parkingDeptSearchBtn').addEventListener('click', runParkingDeptSearch);
         document.getElementById('parkingDeptCheckIssueBtn').addEventListener('click', runParkingDeptCheckById);
+        document.getElementById('parkingDeptCommenterUsername').value = CONFIG.parkingDeptLetter.defaultForwardCommenterUsername || '';
+        [document.getElementById('parkingDeptModeBoilerplate'), document.getElementById('parkingDeptModeCommenter')].forEach((radio) => {
+            radio.addEventListener('change', () => {
+                document.getElementById('parkingDeptCommenterUsername').classList.toggle('hidden', !document.getElementById('parkingDeptModeCommenter').checked);
+            });
+        });
         document.getElementById('parkingDeptGenerateBtn').addEventListener('click', generateParkingDeptLetter);
         document.getElementById('parkingDeptSettingsBtn').addEventListener('click', showParkingDeptSettings);
         document.getElementById('parkingDeptSettingsCloseBtn').addEventListener('click', showParkingDeptList);
@@ -4912,6 +4940,35 @@
             }
         }
 
+        // "Comments by user" detection mode -- flags an issue if ANY of its
+        // comments were left by the given commenter, regardless of
+        // wording. Compares raw.commenter.name (see fetchAllIssueComments/
+        // normalizeComment, which keep the raw SeeClickFix comment object
+        // around specifically so callers like this can reach fields
+        // normalizeComment itself doesn't pull out) case-insensitively and
+        // trimmed, since a commenter's display name is exact but casing
+        // isn't worth being strict about.
+        function commentIsByCommenter(comment, username) {
+            const name = comment?.raw?.commenter?.name;
+            if (!name || !username) return false;
+            return String(name).trim().toLowerCase() === String(username).trim().toLowerCase();
+        }
+
+        function issueMatchesCommenter(comments, username) {
+            const matched = comments.some((c) => commentIsByCommenter(c, username));
+            return { matched, method: matched ? 'commenter' : null };
+        }
+
+        // Dispatches to whichever detection method the Notify Parking Dept
+        // screen has selected (see the radio toggle above
+        // #parkingDeptListView) -- everything downstream (flagging,
+        // grouping, letter generation) is identical either way; only the
+        // "does this issue belong on the list at all" check differs.
+        async function detectParkingDeptMatch(comments, mode, commenterUsername) {
+            if (mode === 'commenter') return issueMatchesCommenter(comments, commenterUsername);
+            return issueHasParkingDeptReferral(comments);
+        }
+
         // Checks all of an issue's comments by keyword first (cheap, no API
         // call); only if NONE match does this fall back to a single Gemini
         // call for that issue (last 5 comments, newest-first, to bound
@@ -4939,14 +4996,24 @@
 
         // --- Search orchestration ------------------------------------------
 
+        // Reads the Notify Parking Dept screen's Detection Method toggle.
+        // Both searchParkingDeptCandidates and runParkingDeptCheckById go
+        // through this so Search and Check Issue always agree on which
+        // method is currently selected.
+        function getParkingDeptDetectionMode() {
+            const mode = document.getElementById('parkingDeptModeCommenter').checked ? 'commenter' : 'boilerplate';
+            const commenterUsername = document.getElementById('parkingDeptCommenterUsername').value.trim();
+            return { mode, commenterUsername };
+        }
+
         // Fetches one issue's comments, checks them for a parking-dept
         // referral, and writes the result back to Firestore -- flagged, or
         // just a fresh parkingDeptLastCheckedAt so it sinks to the back of
         // the oldest-checked-first queue. Shared by the bulk Search scan
         // below and the manual "Check Issue #" lookup (runParkingDeptCheckById).
-        async function checkAndFlagParkingDeptIssue(issueId, uid) {
+        async function checkAndFlagParkingDeptIssue(issueId, uid, mode, commenterUsername) {
             const comments = await fetchAllIssueComments(issueId);
-            const { matched, method } = await issueHasParkingDeptReferral(comments);
+            const { matched, method } = await detectParkingDeptMatch(comments, mode, commenterUsername);
             const now = new Date().toISOString();
             if (matched) {
                 await historyCollection(uid).doc(String(issueId)).update({
@@ -4971,7 +5038,7 @@
         // in this app depends on -- this is why a run can take a while
         // with a large history). Each issue is wrapped in its own
         // try/catch so one bad ticket doesn't abort the run.
-        async function searchParkingDeptCandidates() {
+        async function searchParkingDeptCandidates(mode, commenterUsername) {
             const statusEl = document.getElementById('parkingDeptSearchStatus');
             const uid = currentUid || await historySignedIn;
             const candidates = historyCache
@@ -4989,7 +5056,7 @@
                 const entry = candidates[i];
                 if (statusEl) statusEl.textContent = `Checking ${i + 1} of ${candidates.length} (#${entry.issueId})...`;
                 try {
-                    if (await checkAndFlagParkingDeptIssue(entry.issueId, uid)) flaggedCount++;
+                    if (await checkAndFlagParkingDeptIssue(entry.issueId, uid, mode, commenterUsername)) flaggedCount++;
                 } catch (err) {
                     logToConsole(`[parking dept] Could not check issue #${entry.issueId}: ${err instanceof Error ? err.message : err}`, true);
                 }
@@ -5001,9 +5068,16 @@
         async function runParkingDeptSearch() {
             const btn = document.getElementById('parkingDeptSearchBtn');
             const status = document.getElementById('parkingDeptSearchStatus');
+            const { mode, commenterUsername } = getParkingDeptDetectionMode();
+            if (mode === 'commenter' && !commenterUsername) {
+                status.textContent = 'Enter a commenter username first.';
+                status.className = 'text-center text-xs font-medium text-red-600 mt-2';
+                return;
+            }
+            status.className = 'text-center text-xs font-medium text-slate-500 mt-2';
             btn.disabled = true;
             try {
-                const { checked, flagged } = await searchParkingDeptCandidates();
+                const { checked, flagged } = await searchParkingDeptCandidates(mode, commenterUsername);
                 status.textContent = checked === 0
                     ? 'No new issues to check.'
                     : `Checked ${checked} issue(s), found ${flagged} new match(es).`;
@@ -5033,11 +5107,17 @@
                 return;
             }
 
+            const { mode, commenterUsername } = getParkingDeptDetectionMode();
+            if (mode === 'commenter' && !commenterUsername) {
+                status.textContent = 'Enter a commenter username first.';
+                return;
+            }
+
             btn.disabled = true;
             status.textContent = `Checking #${issueId}...`;
             try {
                 const uid = currentUid || await historySignedIn;
-                const matched = await checkAndFlagParkingDeptIssue(issueId, uid);
+                const matched = await checkAndFlagParkingDeptIssue(issueId, uid, mode, commenterUsername);
                 status.textContent = matched
                     ? `Issue #${issueId} flagged -- referral found.`
                     : `Issue #${issueId} checked -- no referral found in its comments.`;
