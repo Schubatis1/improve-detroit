@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.30.1)</title>
+    <title>You Can't Park There (v3.31.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -37,7 +37,7 @@
          file -- bump it (matching APP_VERSION below) whenever config.js or
          this file changes, so a browser that loaded the page just before a
          deploy doesn't keep running stale config after a normal refresh. -->
-    <script src="config.js?v=3.30.1"></script>
+    <script src="config.js?v=3.31.0"></script>
     <!-- Firebase (compat build, so it works as a plain global like the rest
          of this no-build page) -- syncs submission history to Firestore. -->
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -698,7 +698,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.30.1</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.31.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -858,14 +858,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.30.1)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.31.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.30.1)...
+            App initialized (v3.31.0)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -877,13 +877,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.30.1';
+        const APP_VERSION = '3.31.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.31.0', date: '2026-08-14', notes: [
+                'Replaced the free, rate-limited corsproxy.io dependency with a first-party Vercel serverless function (api/proxy.js) for every SeeClickFix, Plate Recognizer, and MailStream call that needs to route around CORS -- same-origin now, so it\'s no longer subject to corsproxy.io\'s own throttling/dropped-request issues on top of the upstream APIs\' own limits.',
+            ] },
             { version: '3.30.1', date: '2026-08-14', notes: [
                 'Deployed the app on Vercel (https://improve-detroit.vercel.app). Fixed a deploy config gap that briefly let the gitignored Secrets/ folder (including the Firebase service account key) get uploaded and served publicly -- added a .vercelignore, redeployed, and removed the exposed deployment. If you haven\'t already, rotate the Firebase service account key as a precaution.',
             ] },
@@ -1915,7 +1918,7 @@
             try {
                 logToConsole(`Fetching question schema for request type ${requestTypeId}...`);
                 const targetUrl = `https://seeclickfix.com/api/v2/request_types/${requestTypeId}`;
-                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+                const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
                 const response = await fetch(proxyUrl, {
                     headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` }
                 });
@@ -2685,7 +2688,7 @@
                 // for the SeeClickFix calls (including its own multipart image
                 // upload), which is known to handle binary POST bodies fine.
                 const targetUrl = 'https://api.platerecognizer.com/v1/plate-reader/';
-                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+                const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
 
                 // A batch upload fires every photo's lookup at once, which
                 // routinely trips Plate Recognizer's per-second rate limit
@@ -2973,7 +2976,7 @@
             try {
                 logToConsole(`[${item.file.name}] Dispatching POST request via CORS proxy...`);
                 const targetUrl = 'https://seeclickfix.com/api/v2/issues';
-                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+                const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
 
                 const response = await fetch(proxyUrl, {
                     method: 'POST',
@@ -4602,7 +4605,7 @@
         // callers decide what "couldn't check this one" means for them.
         async function fetchIssueStatus(issueId) {
             const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}`;
-            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+            const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
             const response = await fetch(proxyUrl, {
                 headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` }
             });
@@ -4643,8 +4646,8 @@
         // up at once, rather than opening each report's fly-in one at a
         // time. Sequential, not parallel, same reasoning as
         // searchParkingDeptCandidates: keeps the debug console legible
-        // and avoids hammering the shared free corsproxy.io proxy every
-        // SeeClickFix call in this app depends on -- a run can take a
+        // and avoids hammering the proxy every SeeClickFix call in this app
+        // depends on -- a run can take a
         // while with a large history. Each issue's status/comments fetch
         // is independently wrapped in try/catch so one bad ticket can't
         // abort the rest, and iterates a snapshot of historyCache taken
@@ -4716,18 +4719,19 @@
         let commentsShapeLogged = false;
 
         // Notify Parking Dept's Search can burn through 100+ issues in a
-        // single run (see searchParkingDeptCandidates), which routinely
-        // trips corsproxy.io's own free-tier rate limit (429) well before
-        // SeeClickFix's -- and once that happens, corsproxy.io tends to
-        // start dropping requests outright (a generic "Load failed", no
-        // HTTP status at all) for a bit rather than cleanly 429ing every
-        // one. Retry both cases with backoff, same pattern as Plate
-        // Recognizer's rate-limit retry above -- corsproxy.io doesn't
-        // report a wait time like Plate Recognizer does, so this just
-        // backs off attempt-by-attempt (2s, 4s, 6s).
+        // single run (see searchParkingDeptCandidates), which can still
+        // trip SeeClickFix's own rate limit (429) or hit a dropped request
+        // (a generic "Load failed", no HTTP status at all). Retry both
+        // cases with backoff, same pattern as Plate Recognizer's
+        // rate-limit retry above -- SeeClickFix doesn't report a wait time
+        // like Plate Recognizer does, so this just backs off
+        // attempt-by-attempt (2s, 4s, 6s). (Previously this also had to
+        // account for corsproxy.io's own free-tier rate limit on top of
+        // SeeClickFix's, before the proxy moved to a first-party Vercel
+        // function -- see api/proxy.js.)
         async function fetchIssueCommentsPage(issueId, page = 1, perPage = 100) {
             const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}/comments?page=${page}&per_page=${perPage}`;
-            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+            const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
             const maxAttempts = 4;
             let response;
             let lastErr;
@@ -4870,7 +4874,7 @@
 
         async function postIssueComment(issueId, commentText) {
             const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}/comments`;
-            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+            const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
             const response = await fetch(proxyUrl, {
                 method: 'POST',
                 headers: {
@@ -4896,7 +4900,7 @@
         // token, but consistent with what was actually observed working.
         async function uploadTransientFile(file) {
             const targetUrl = 'https://seeclickfix.com/scf/v1/transient_files';
-            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+            const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
             const formData = new FormData();
             formData.append('Content-Type', file.type);
             formData.append('file', file);
@@ -4919,7 +4923,7 @@
         // Parking Dept" comment above postIssueComment).
         async function postIssueCommentWithPhotos(issueId, commentText, photoLocationUrls) {
             const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}/comments`;
-            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+            const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
             const body = { comment: commentText ?? null };
             photoLocationUrls.forEach((url, i) => {
                 body[i === 0 ? 'image' : `image${i}`] = url;
@@ -5083,8 +5087,8 @@
         // SeeClickFix ticket -- nothing to fetch comments from) in the
         // whole report history, oldest-checked-first, sequentially (not
         // parallel -- keeps the debug console legible and avoids hammering
-        // the shared free corsproxy.io proxy every other SeeClickFix call
-        // in this app depends on -- this is why a run can take a while
+        // the proxy every other SeeClickFix call in this app depends on --
+        // this is why a run can take a while
         // with a large history). Each issue is wrapped in its own
         // try/catch so one bad ticket doesn't abort the run.
         async function searchParkingDeptCandidates(mode, commenterUsername) {
@@ -5110,7 +5114,7 @@
                     logToConsole(`[parking dept] Could not check issue #${entry.issueId}: ${err instanceof Error ? err.message : err}`, true);
                 }
                 // A large history (100+ issues) firing this many requests
-                // back-to-back trips corsproxy.io's own rate limit well
+                // back-to-back can trip SeeClickFix's own rate limit well
                 // before it's actually needed -- a small pace between
                 // issues (on top of fetchIssueCommentsPage's own 429/retry
                 // handling) keeps a big run from front-loading a burst of
@@ -5712,14 +5716,15 @@
         // and its OPTIONS preflight explicitly allows the
         // authorization/content-type/idempotency-key headers this app
         // sends, so a direct browser fetch genuinely works -- this is NOT
-        // a CORS-restricted API, unlike SeeClickFix's. The corsproxy.io
-        // fallback below is kept only as a last resort for a transient
-        // network hiccup, not because a direct call is expected to be
-        // blocked. (What WAS broken the first time this shipped: the API
-        // needs an explicit `Accept: application/json` header, or a
+        // a CORS-restricted API, unlike SeeClickFix's. The proxy fallback
+        // below is kept only as a last resort for a transient network
+        // hiccup, not because a direct call is expected to be blocked.
+        // (What WAS broken the first time this shipped: the API needs an
+        // explicit `Accept: application/json` header, or a
         // failed/unauthenticated request 302-redirects to an HTML /login
-        // page instead of returning a JSON error -- corsproxy.io chokes on
-        // that redirect and returns a useless 502. Also turned out the
+        // page instead of returning a JSON error -- the old corsproxy.io
+        // fallback used to choke on that redirect and return a useless
+        // 502. Also turned out the
         // very first API key generated for this account simply didn't
         // authenticate at all -- a fresh key from MailStream's dashboard
         // fixed that; if this ever 401s again, regenerating the key is the
@@ -5754,7 +5759,7 @@
                 return response.json();
             } catch (directErr) {
                 logToConsole(`Direct MailStream request failed -- retrying via the same CORS proxy used for SeeClickFix, though this API allows direct browser calls so this is likely a transient network issue rather than a CORS block: ${directErr instanceof Error ? directErr.message : directErr}`, true);
-                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+                const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
                 const response = await fetch(proxyUrl, { method: 'POST', headers, body: JSON.stringify(body) });
                 if (!response.ok) throw new Error(`MailStream API error via proxy (${response.status}): ${await response.text()}`);
                 return response.json();
@@ -5781,7 +5786,7 @@
                 return response.json();
             } catch (directErr) {
                 logToConsole(`Direct MailStream cancel request failed -- retrying via CORS proxy: ${directErr instanceof Error ? directErr.message : directErr}`, true);
-                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+                const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
                 const response = await fetch(proxyUrl, { method: 'POST', headers });
                 if (!response.ok) throw new Error(`MailStream cancel error via proxy (${response.status}): ${await response.text()}`);
                 return response.json();
