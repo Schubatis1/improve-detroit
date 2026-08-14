@@ -5552,18 +5552,34 @@
         // names, the fact front_artwork accepts a raw HTML string) come
         // from https://docs.my.mailstream.app (this account's own OpenAPI
         // docs -- signed in as Adam Schubatis), not published marketing
-        // copy. NOT independently verified against a real send in this
-        // environment -- written defensively (see postMailStreamLetter's
-        // CORS-proxy fallback), same candor as the SeeClickFix comment
-        // code above: smoke-test before relying on this at scale.
-        // Specifically unverified: whether a long, multi-page-worth-of-HTML
-        // letter is handled or silently truncated/rejected (the docs only
-        // guarantee multi-page for PDF artwork), and whether
-        // address_placement: 'top_first_page' actually lines up with where
-        // this letter's own recipient address block falls on the page.
+        // copy. Confirmed live (2026-08-14, via curl -- NOT through this
+        // app's UI, so still worth a real end-to-end smoke test): the
+        // /api/v1/letters endpoint sends `access-control-allow-origin: *`
+        // and its OPTIONS preflight explicitly allows the
+        // authorization/content-type/idempotency-key headers this app
+        // sends, so a direct browser fetch genuinely works -- this is NOT
+        // a CORS-restricted API, unlike SeeClickFix's. The corsproxy.io
+        // fallback below is kept only as a last resort for a transient
+        // network hiccup, not because a direct call is expected to be
+        // blocked. (What WAS broken the first time this shipped: the API
+        // needs an explicit `Accept: application/json` header, or a
+        // failed/unauthenticated request 302-redirects to an HTML /login
+        // page instead of returning a JSON error -- corsproxy.io chokes on
+        // that redirect and returns a useless 502. Also turned out the
+        // very first API key generated for this account simply didn't
+        // authenticate at all -- a fresh key from MailStream's dashboard
+        // fixed that; if this ever 401s again, regenerating the key is the
+        // first thing to try, not a code bug.)
+        // Still genuinely unverified: whether a long,
+        // multi-page-worth-of-HTML letter is handled or silently
+        // truncated/rejected (the docs only guarantee multi-page for PDF
+        // artwork), and whether address_placement: 'top_first_page'
+        // actually lines up with where this letter's own recipient address
+        // block falls on the printed page.
         async function postMailStreamLetter(body, idempotencyKey) {
             const targetUrl = 'https://my.mailstream.app/api/v1/letters';
             const headers = {
+                'Accept': 'application/json',
                 'Authorization': `Bearer ${CONFIG.mailStreamApiKey}`,
                 'Content-Type': 'application/json',
                 'Idempotency-Key': idempotencyKey,
@@ -5573,7 +5589,7 @@
                 if (!response.ok) throw new Error(`MailStream API error (${response.status}): ${await response.text()}`);
                 return response.json();
             } catch (directErr) {
-                logToConsole(`Direct MailStream request failed (likely CORS, since this is a browser-only app with no backend) -- retrying via the same CORS proxy used for SeeClickFix: ${directErr instanceof Error ? directErr.message : directErr}`, true);
+                logToConsole(`Direct MailStream request failed -- retrying via the same CORS proxy used for SeeClickFix, though this API allows direct browser calls so this is likely a transient network issue rather than a CORS block: ${directErr instanceof Error ? directErr.message : directErr}`, true);
                 const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
                 const response = await fetch(proxyUrl, { method: 'POST', headers, body: JSON.stringify(body) });
                 if (!response.ok) throw new Error(`MailStream API error via proxy (${response.status}): ${await response.text()}`);
