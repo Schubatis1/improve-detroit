@@ -383,10 +383,56 @@
                     <textarea id="pdRecipientAddress" rows="3" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1" placeholder="Street address&#10;Detroit, MI ZIP"></textarea>
                     <p class="text-[10px] text-slate-400 mt-1">Not pre-filled -- please confirm the correct mailing address before sending. The department's phone number (313-221-2558) is already cited in every letter.</p>
                 </div>
+                <div class="bg-white border border-slate-200 rounded-lg p-3">
+                    <p class="text-xs font-bold text-detroit-navy uppercase mb-1">Recipient Address (for MailStream)</p>
+                    <p class="text-[10px] text-slate-400 mb-2">MailStream's API needs the recipient address broken into fields, separate from the free-text address above -- only needed if you use "Send via MailStream".</p>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Address Line 1</label>
+                    <input type="text" id="pdRecipientAddressLine1" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1 mb-2">
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Address Line 2 (optional)</label>
+                    <input type="text" id="pdRecipientAddressLine2" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1 mb-2">
+                    <div class="flex gap-2">
+                        <div class="flex-1">
+                            <label class="text-xs font-bold text-detroit-navy uppercase">City</label>
+                            <input type="text" id="pdRecipientCity" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                        </div>
+                        <div class="w-16">
+                            <label class="text-xs font-bold text-detroit-navy uppercase">State</label>
+                            <input type="text" id="pdRecipientState" maxlength="2" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                        </div>
+                        <div class="w-24">
+                            <label class="text-xs font-bold text-detroit-navy uppercase">ZIP</label>
+                            <input type="text" id="pdRecipientZip" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                        </div>
+                    </div>
+                </div>
                 <button id="pdSettingsSaveBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition mt-2">
                     Save Settings
                 </button>
                 <p id="pdSettingsMsg" class="text-center text-xs font-medium"></p>
+            </div>
+        </div>
+
+        <!-- Shown after "Generate Letter" -- an editable preview of the
+             letter text (seeded from buildLetterHtmlBody) before it's
+             actually downloaded or sent. Nothing is recorded in Firestore
+             (letter doc created, issues flipped to 'lettered') until one of
+             the two action buttons below actually succeeds -- see
+             generateParkingDeptLetter/finalizeGeneratedParkingDeptLetter. -->
+        <div id="parkingDeptPreviewView" class="hidden">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-montserrat font-extrabold text-detroit-dark">Review Letter</h2>
+                <button id="parkingDeptPreviewCloseBtn" aria-label="Close" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark">&times;</button>
+            </div>
+            <p class="text-xs text-slate-400 mb-2">Edit the letter text below if needed. Edits here only affect "Send via MailStream" -- "Download .docx" always regenerates the letter fresh from your report data, ignoring any edits made here.</p>
+            <div id="parkingDeptPreviewBody" contenteditable="true" class="bg-white border border-detroit-mint rounded-lg p-4 text-sm mb-4 flex-grow overflow-y-auto"></div>
+            <div class="flex flex-col gap-2 pb-8">
+                <button id="parkingDeptDownloadBtn" class="w-full bg-white border border-detroit-mint text-detroit-navy font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-mint/20 transition">
+                    Download .docx
+                </button>
+                <button id="parkingDeptSendMailStreamBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition">
+                    Send via MailStream
+                </button>
+                <p id="parkingDeptPreviewMsg" class="text-center text-xs font-medium"></p>
             </div>
         </div>
     </div>
@@ -1042,6 +1088,13 @@
         let resolveGeminiKeyReady;
         const geminiKeyReady = new Promise((resolve) => { resolveGeminiKeyReady = resolve; });
 
+        // Same reasoning/same doc as geminiApiKey above -- field
+        // "mailStreamApiKey" on the same config/secrets document. Add it
+        // via the Firebase Console, never through this app (config/* is
+        // client-read-only, see firestore.rules) and never in config.js.
+        let resolveMailStreamKeyReady;
+        const mailStreamKeyReady = new Promise((resolve) => { resolveMailStreamKeyReady = resolve; });
+
         const signInScreen = document.getElementById('signInScreen');
         const appContent = document.getElementById('appContent');
         const signInStatus = document.getElementById('signInStatus');
@@ -1056,12 +1109,17 @@
                 firestoreDb.collection('config').doc('secrets').get()
                     .then((doc) => {
                         CONFIG.geminiApiKey = doc.exists ? doc.data().geminiApiKey : null;
+                        CONFIG.mailStreamApiKey = doc.exists ? doc.data().mailStreamApiKey : null;
                     })
                     .catch((err) => {
                         CONFIG.geminiApiKey = null;
-                        logToConsole(`Could not load Gemini API key from Firestore: ${err instanceof Error ? err.message : err}`, true);
+                        CONFIG.mailStreamApiKey = null;
+                        logToConsole(`Could not load Gemini/MailStream API keys from Firestore: ${err instanceof Error ? err.message : err}`, true);
                     })
-                    .finally(resolveGeminiKeyReady);
+                    .finally(() => {
+                        resolveGeminiKeyReady();
+                        resolveMailStreamKeyReady();
+                    });
                 return;
             }
             if (user && user.email !== ALLOWED_EMAIL) {
@@ -1462,6 +1520,9 @@
         document.getElementById('parkingDeptSettingsBtn').addEventListener('click', showParkingDeptSettings);
         document.getElementById('parkingDeptSettingsCloseBtn').addEventListener('click', showParkingDeptList);
         document.getElementById('pdSettingsSaveBtn').addEventListener('click', saveParkingDeptSettings);
+        document.getElementById('parkingDeptPreviewCloseBtn').addEventListener('click', showParkingDeptList);
+        document.getElementById('parkingDeptDownloadBtn').addEventListener('click', downloadGeneratedParkingDeptLetter);
+        document.getElementById('parkingDeptSendMailStreamBtn').addEventListener('click', sendGeneratedParkingDeptLetterViaMailStream);
         document.getElementById('geofenceAddBtn').addEventListener('click', () => showGeofenceForm(null));
         document.getElementById('geofenceFormCloseBtn').addEventListener('click', showGeofenceList);
         document.getElementById('gfAllHours').addEventListener('change', (e) => {
@@ -1933,6 +1994,15 @@
                 <div data-role="mapWrap" class="rounded-lg overflow-hidden border border-detroit-mint" style="height:160px"></div>
                 <p class="text-[10px] text-slate-400 font-mono" data-role="coords">--</p>
 
+                <div data-role="categoryWrap" class="hidden">
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Report Type</label>
+                    <select data-role="category" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                        <option value="vehicle">Parking Violation (vehicle)</option>
+                        <option value="other">Bike Lane Maintenance (potholes/debris)</option>
+                    </select>
+                    <p class="text-[10px] text-slate-400 mt-1">AI-classified automatically -- change this if it picked the wrong type. Fields below will update to match.</p>
+                </div>
+
                 <div data-role="geofenceWrap" class="hidden">
                     <label class="text-xs font-bold text-detroit-navy uppercase">Geofence</label>
                     <select data-role="geofence" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1"></select>
@@ -2012,6 +2082,8 @@
                 address: detail.querySelector('[data-role="address"]'),
                 mapWrap: detail.querySelector('[data-role="mapWrap"]'),
                 coords: detail.querySelector('[data-role="coords"]'),
+                categoryWrap: detail.querySelector('[data-role="categoryWrap"]'),
+                category: detail.querySelector('[data-role="category"]'),
                 geofenceWrap: detail.querySelector('[data-role="geofenceWrap"]'),
                 geofence: detail.querySelector('[data-role="geofence"]'),
                 summary: detail.querySelector('[data-role="summary"]'),
@@ -2038,6 +2110,7 @@
                 item.els.natureCustom.classList.toggle('hidden', item.els.nature.value !== '__custom__');
             });
             item.els.geofence.addEventListener('change', () => applyGeofenceSelection(item, item.els.geofence.value));
+            item.els.category.addEventListener('change', () => applyManualCategoryOverride(item, item.els.category.value));
             item.els.suppressReport.addEventListener('change', () => updateSubmitBtnLabel(item));
             item.els.submitBtn.addEventListener('click', () => submitItem(item));
             item.els.thumbnail.addEventListener('click', (e) => {
@@ -2149,160 +2222,200 @@
                 logToConsole(`[${item.file.name}] Classifying photo with Gemini...`);
                 item.els.statusBadge.textContent = 'Classifying photo...';
                 const classification = await classifyPhotoWithGemini(item, workflow, geofence, address);
-                item.category = classification.category;
+
+                // Stashed so applyManualCategoryOverride can re-derive
+                // fields later if the user decides Gemini picked the wrong
+                // report type -- it never re-calls Gemini, just re-runs the
+                // same derivation with the category flipped.
+                item.classification = classification;
+                item.workflow = workflow;
+                item.matchedGeofence = geofence;
+                item.resolvedAddress = address;
+                item.photoTimeString = photoTimeString;
+
+                item.els.categoryWrap.classList.remove('hidden');
+                item.els.category.value = classification.category;
 
                 if (classification.category === 'vehicle') {
-                    const schema = await getRequestTypeSchema(CONFIG.seeClickFix.requestTypeId);
-                    const natureValues = getNatureSelectValues(schema);
-                    item.els.nature.innerHTML = natureValues.map((v) =>
-                        `<option value="${escapeHtml(v.key)}">${escapeHtml(v.name)}</option>`
-                    ).join('') + '<option value="__custom__">Custom...</option>';
-                    item.natureValues = natureValues;
-                    item.classificationDescription = classification.description || null;
-                    item.vehicleQuestionId = getVehicleInfoQuestionId(schema);
-                    if (!item.vehicleQuestionId) {
-                        logToConsole(`[${item.file.name}] Could not find the vehicle/plate question in the schema -- plate field will show but won't be submitted.`, true);
-                    }
-
-                    item.workflow = workflow;
-                    item.matchedGeofence = geofence;
-                    if (workflow.bluCategory) item.els.bluCategory.value = workflow.bluCategory;
-                    if (geofence) {
-                        logToConsole(`[${item.file.name}] Within ${geofence.radiusMeters}m of geofence "${geofence.name}" -- using its workflow.`);
-                        // detectRepeatIncidents/reportRepeatIncidents default
-                        // to true (unset on older/backfilled geofence docs).
-                        if (geofence.detectRepeatIncidents !== false) {
-                            // Give Firestore history a few seconds to load on a
-                            // cold start; proceed with whatever's cached
-                            // (possibly none) if it doesn't arrive in time
-                            // rather than blocking forever.
-                            await Promise.race([historyReady, new Promise((resolve) => setTimeout(resolve, 4000))]);
-                            const priorComplaintIds = getPriorComplaintIdsForGeofence(geofence.id);
-                            if (priorComplaintIds.length > 0) {
-                                logToConsole(`[${item.file.name}] Found ${priorComplaintIds.length} prior complaint(s) for this geofence: ${priorComplaintIds.join(', ')}`);
-                                if (geofence.reportRepeatIncidents !== false) {
-                                    workflow.priorComplaintIds = priorComplaintIds;
-                                } else {
-                                    logToConsole(`[${item.file.name}] "Report Repeat Incidents" is off for this geofence -- not citing them in the message.`);
-                                }
-                            }
-                        }
-                    }
-
-                    // Geofenced incidents never get an AI-authored description
-                    // (see classifyPhotoWithGemini) -- they always use the
-                    // geofence's own configured wording verbatim. Outside a
-                    // geofence, Gemini writes the description itself starting
-                    // from the rotating list; it returns null instead if the
-                    // photo was too unclear to verify against, in which case
-                    // an unmodified template is used as-is.
-                    const autoDescription = (!geofence && classification.description)
-                        ? classification.description
-                        : pickRandomDescription(workflow, address);
-                    item.autoDescriptionValue = autoDescription;
-
-                    // Pre-fill the editor; every field stays fully mutable before submission.
-                    item.els.summary.value = workflow.summary;
-                    item.els.description.value = autoDescription;
-                    item.els.nature.value = pickNatureValue(natureValues, workflow);
-                    item.els.timing.value = photoTimeString;
-
-                    item.els.natureWrap.classList.remove('hidden');
-                    item.els.timingWrap.classList.remove('hidden');
-                    item.els.plateWrap.classList.remove('hidden');
-                    item.els.crossStreetsWrap.classList.add('hidden');
-
-                    item.els.geofenceWrap.classList.remove('hidden');
-                    item.els.geofence.innerHTML = geofenceOptionsHtml();
-                    item.els.geofence.value = geofence ? geofence.id : '';
-
-                    item.els.plate.value = classification.plate ? classification.plate.toUpperCase() : '';
-                    item.els.plate.placeholder = classification.plate ? '' : 'No plate detected';
-                    const vehicleParts = [classification.color, classification.make, classification.model].filter(Boolean);
-                    if (vehicleParts.length > 0) {
-                        item.els.vehicle.value = vehicleParts.join(' ');
-                        item.els.vehicle.placeholder = '';
-                        item.els.vehicleWrap.classList.remove('hidden');
-                        logToConsole(`[${item.file.name}] Vehicle detected: ${vehicleParts.join(' ')} -- please verify.`);
-                    } else {
-                        item.els.vehicle.placeholder = 'No vehicle details detected';
-                        item.els.vehicleWrap.classList.remove('hidden');
-                    }
-                    if (classification.plate) {
-                        logToConsole(`[${item.file.name}] Plate detected: ${item.els.plate.value} -- please verify.`);
-                        applyPlateWorkflow(item, classification.plate);
-                        applyRepeatOffenderNote(item, classification.plate);
-                    } else {
-                        logToConsole(`[${item.file.name}] No plate detected in photo.`);
-                    }
-
-                    item.els.statusBadge.textContent = 'Ready to submit';
-                    item.els.statusBadge.className = 'text-xs font-bold uppercase mt-1 text-detroit-dark';
-                    item.fieldsReady = true;
-                    item.status = 'ready';
-
-                    initMiniMap(item);
-                    // Cross-check against Plate Recognizer -- non-blocking,
-                    // updates the plate field/note in place once it resolves.
-                    crossCheckPlate(item, classification.plate);
-
+                    await applyVehicleClassification(item, classification, workflow, geofence, address, photoTimeString);
                 } else {
-                    // "Other" bike lane issue (glass, sand, garbage bin,
-                    // construction debris, an actual pothole, etc.) --
-                    // deliberately routed through request type 7047
-                    // ("Potholes"), the one that reaches Detroit's General
-                    // Services Dept for non-parking-related bike lane
-                    // maintenance. See config.js's potholeRequestTypeId.
-                    const potholeSchema = await getRequestTypeSchema(CONFIG.seeClickFix.potholeRequestTypeId);
-                    item.potholeQuestionIds = {
-                        potholeOrSinkhole: findQuestionId(potholeSchema, 'pothole or a sinkhole'),
-                        roadOrSidewalk: findQuestionId(potholeSchema, 'road or a sidewalk'),
-                        crossStreets: findQuestionId(potholeSchema, 'cross streets'),
-                        count: findQuestionId(potholeSchema, 'how many potholes'),
-                        size: findQuestionId(potholeSchema, 'approximate size of the pothole'),
-                    };
-                    if (!item.potholeQuestionIds.crossStreets) {
-                        logToConsole(`[${item.file.name}] Could not find the cross-streets question in request type ${CONFIG.seeClickFix.potholeRequestTypeId}'s schema -- submission will likely fail.`, true);
-                    }
-
-                    let description = classification.description || 'Bike lane maintenance issue reported.';
-                    if (classification.suggest_sweep) {
-                        description += ' Requesting the City sweep the bike lane to clear this debris.';
-                    }
-
-                    item.els.summary.value = 'Bicycle Lane Maintenance Request';
-                    item.els.description.value = description;
-                    item.els.bluCategory.value = classification.blu_category === 'Construction'
-                        ? 'Construction'
-                        : 'Other  (damaged lane / snow / debris / pedestrian / etc.)';
-
-                    item.els.natureWrap.classList.add('hidden');
-                    item.els.timingWrap.classList.add('hidden');
-                    item.els.vehicleWrap.classList.add('hidden');
-                    item.els.plateWrap.classList.add('hidden');
-                    item.els.crossStreetsWrap.classList.remove('hidden');
-                    item.els.geofenceWrap.classList.add('hidden');
-
-                    logToConsole(`[${item.file.name}] Looking up nearest cross streets...`);
-                    const crossStreets = await getCrossStreets(item.lat, item.lng);
-                    item.els.crossStreets.value = crossStreets || address;
-                    if (!crossStreets) {
-                        logToConsole(`[${item.file.name}] No nearby intersection found -- using the resolved street address as a cross-streets fallback.`);
-                    }
-
-                    item.els.statusBadge.textContent = 'Ready to submit';
-                    item.els.statusBadge.className = 'text-xs font-bold uppercase mt-1 text-detroit-dark';
-                    item.fieldsReady = true;
-                    item.status = 'ready';
-
-                    initMiniMap(item);
+                    await applyOtherClassification(item, classification, address);
                 }
+                item.category = classification.category;
 
             } catch (err) {
                 item.status = 'failed';
                 item.els.statusBadge.textContent = 'Location extraction failed';
                 item.els.statusBadge.className = 'text-xs font-bold uppercase mt-1 text-red-600';
                 logToConsole(`[${item.file.name}] ${err instanceof Error ? err.message : err}`, true);
+            }
+            updateSubmitAllVisibility();
+        }
+
+        // Populates the editor for a "vehicle" (parking violation) report.
+        // Shared by processQueueItem's initial auto-classification and by
+        // applyManualCategoryOverride when the user flips the Report Type
+        // select after Gemini got it wrong.
+        async function applyVehicleClassification(item, classification, workflow, geofence, address, photoTimeString) {
+            const schema = await getRequestTypeSchema(CONFIG.seeClickFix.requestTypeId);
+            const natureValues = getNatureSelectValues(schema);
+            item.els.nature.innerHTML = natureValues.map((v) =>
+                `<option value="${escapeHtml(v.key)}">${escapeHtml(v.name)}</option>`
+            ).join('') + '<option value="__custom__">Custom...</option>';
+            item.natureValues = natureValues;
+            item.classificationDescription = classification.description || null;
+            item.vehicleQuestionId = getVehicleInfoQuestionId(schema);
+            if (!item.vehicleQuestionId) {
+                logToConsole(`[${item.file.name}] Could not find the vehicle/plate question in the schema -- plate field will show but won't be submitted.`, true);
+            }
+
+            if (workflow.bluCategory) item.els.bluCategory.value = workflow.bluCategory;
+            if (geofence) {
+                logToConsole(`[${item.file.name}] Within ${geofence.radiusMeters}m of geofence "${geofence.name}" -- using its workflow.`);
+                // detectRepeatIncidents/reportRepeatIncidents default
+                // to true (unset on older/backfilled geofence docs).
+                if (geofence.detectRepeatIncidents !== false) {
+                    // Give Firestore history a few seconds to load on a
+                    // cold start; proceed with whatever's cached
+                    // (possibly none) if it doesn't arrive in time
+                    // rather than blocking forever.
+                    await Promise.race([historyReady, new Promise((resolve) => setTimeout(resolve, 4000))]);
+                    const priorComplaintIds = getPriorComplaintIdsForGeofence(geofence.id);
+                    if (priorComplaintIds.length > 0) {
+                        logToConsole(`[${item.file.name}] Found ${priorComplaintIds.length} prior complaint(s) for this geofence: ${priorComplaintIds.join(', ')}`);
+                        if (geofence.reportRepeatIncidents !== false) {
+                            workflow.priorComplaintIds = priorComplaintIds;
+                        } else {
+                            logToConsole(`[${item.file.name}] "Report Repeat Incidents" is off for this geofence -- not citing them in the message.`);
+                        }
+                    }
+                }
+            }
+
+            // Geofenced incidents never get an AI-authored description
+            // (see classifyPhotoWithGemini) -- they always use the
+            // geofence's own configured wording verbatim. Outside a
+            // geofence, Gemini writes the description itself starting
+            // from the rotating list; it returns null instead if the
+            // photo was too unclear to verify against, in which case
+            // an unmodified template is used as-is.
+            const autoDescription = (!geofence && classification.description)
+                ? classification.description
+                : pickRandomDescription(workflow, address);
+            item.autoDescriptionValue = autoDescription;
+
+            // Pre-fill the editor; every field stays fully mutable before submission.
+            item.els.summary.value = workflow.summary;
+            item.els.description.value = autoDescription;
+            item.els.nature.value = pickNatureValue(natureValues, workflow);
+            item.els.timing.value = photoTimeString;
+
+            item.els.natureWrap.classList.remove('hidden');
+            item.els.timingWrap.classList.remove('hidden');
+            item.els.plateWrap.classList.remove('hidden');
+            item.els.crossStreetsWrap.classList.add('hidden');
+
+            item.els.geofenceWrap.classList.remove('hidden');
+            item.els.geofence.innerHTML = geofenceOptionsHtml();
+            item.els.geofence.value = geofence ? geofence.id : '';
+
+            item.els.plate.value = classification.plate ? classification.plate.toUpperCase() : '';
+            item.els.plate.placeholder = classification.plate ? '' : 'No plate detected';
+            const vehicleParts = [classification.color, classification.make, classification.model].filter(Boolean);
+            if (vehicleParts.length > 0) {
+                item.els.vehicle.value = vehicleParts.join(' ');
+                item.els.vehicle.placeholder = '';
+                item.els.vehicleWrap.classList.remove('hidden');
+                logToConsole(`[${item.file.name}] Vehicle detected: ${vehicleParts.join(' ')} -- please verify.`);
+            } else {
+                item.els.vehicle.placeholder = 'No vehicle details detected';
+                item.els.vehicleWrap.classList.remove('hidden');
+            }
+            if (classification.plate) {
+                logToConsole(`[${item.file.name}] Plate detected: ${item.els.plate.value} -- please verify.`);
+                applyPlateWorkflow(item, classification.plate);
+                applyRepeatOffenderNote(item, classification.plate);
+            } else {
+                logToConsole(`[${item.file.name}] No plate detected in photo.`);
+            }
+
+            item.els.statusBadge.textContent = 'Ready to submit';
+            item.els.statusBadge.className = 'text-xs font-bold uppercase mt-1 text-detroit-dark';
+            item.fieldsReady = true;
+            item.status = 'ready';
+
+            initMiniMap(item);
+            // Cross-check against Plate Recognizer -- non-blocking,
+            // updates the plate field/note in place once it resolves.
+            crossCheckPlate(item, classification.plate);
+        }
+
+        // Populates the editor for an "other" bike lane maintenance report
+        // (glass, sand, garbage bin, construction debris, an actual
+        // pothole, etc.) -- deliberately routed through request type 7047
+        // ("Potholes"), the one that reaches Detroit's General Services
+        // Dept for non-parking-related bike lane maintenance. See
+        // config.js's potholeRequestTypeId. Shared by processQueueItem's
+        // initial auto-classification and applyManualCategoryOverride.
+        async function applyOtherClassification(item, classification, address) {
+            const potholeSchema = await getRequestTypeSchema(CONFIG.seeClickFix.potholeRequestTypeId);
+            item.potholeQuestionIds = {
+                potholeOrSinkhole: findQuestionId(potholeSchema, 'pothole or a sinkhole'),
+                roadOrSidewalk: findQuestionId(potholeSchema, 'road or a sidewalk'),
+                crossStreets: findQuestionId(potholeSchema, 'cross streets'),
+                count: findQuestionId(potholeSchema, 'how many potholes'),
+                size: findQuestionId(potholeSchema, 'approximate size of the pothole'),
+            };
+            if (!item.potholeQuestionIds.crossStreets) {
+                logToConsole(`[${item.file.name}] Could not find the cross-streets question in request type ${CONFIG.seeClickFix.potholeRequestTypeId}'s schema -- submission will likely fail.`, true);
+            }
+
+            let description = classification.description || 'Bike lane maintenance issue reported.';
+            if (classification.suggest_sweep) {
+                description += ' Requesting the City sweep the bike lane to clear this debris.';
+            }
+
+            item.els.summary.value = 'Bicycle Lane Maintenance Request';
+            item.els.description.value = description;
+            item.els.bluCategory.value = classification.blu_category === 'Construction'
+                ? 'Construction'
+                : 'Other  (damaged lane / snow / debris / pedestrian / etc.)';
+
+            item.els.natureWrap.classList.add('hidden');
+            item.els.timingWrap.classList.add('hidden');
+            item.els.vehicleWrap.classList.add('hidden');
+            item.els.plateWrap.classList.add('hidden');
+            item.els.crossStreetsWrap.classList.remove('hidden');
+            item.els.geofenceWrap.classList.add('hidden');
+
+            logToConsole(`[${item.file.name}] Looking up nearest cross streets...`);
+            const crossStreets = await getCrossStreets(item.lat, item.lng);
+            item.els.crossStreets.value = crossStreets || address;
+            if (!crossStreets) {
+                logToConsole(`[${item.file.name}] No nearby intersection found -- using the resolved street address as a cross-streets fallback.`);
+            }
+
+            item.els.statusBadge.textContent = 'Ready to submit';
+            item.els.statusBadge.className = 'text-xs font-bold uppercase mt-1 text-detroit-dark';
+            item.fieldsReady = true;
+            item.status = 'ready';
+
+            initMiniMap(item);
+        }
+
+        // Lets the user correct Gemini's Potholes-vs-Traffic-Complaints
+        // classification by hand before submitting -- re-runs the same
+        // field derivation used on auto-classification (never re-calls
+        // Gemini) so Summary/Description/Nature/BLU Category/etc. all
+        // update to match the corrected report type.
+        async function applyManualCategoryOverride(item, newCategory) {
+            if (!item.classification || newCategory === item.category) return;
+            item.category = newCategory;
+            item.els.statusBadge.textContent = 'Updating fields...';
+            if (newCategory === 'vehicle') {
+                await applyVehicleClassification(item, item.classification, item.workflow, item.matchedGeofence, item.resolvedAddress, item.photoTimeString);
+            } else {
+                await applyOtherClassification(item, item.classification, item.resolvedAddress);
             }
             updateSubmitAllVisibility();
         }
@@ -2916,6 +3029,10 @@
                 vehicleQuestionId: primary.vehicleQuestionId,
                 photoDateObj: primary.photoDateObj,
                 matchedGeofence: primary.matchedGeofence,
+                classification: primary.classification,
+                workflow: primary.workflow,
+                resolvedAddress: primary.resolvedAddress,
+                photoTimeString: primary.photoTimeString,
             };
 
             mountItemCard(merged, `Combined Report (${sourceItems.length} photos)`, primary.previewUrl);
@@ -2924,6 +3041,8 @@
             merged.els.statusBadge.className = 'text-xs font-bold uppercase mt-1 text-detroit-dark';
             merged.fieldsReady = true;
 
+            merged.els.categoryWrap.classList.remove('hidden');
+            merged.els.category.value = 'vehicle';
             merged.els.address.value = primary.els.address.value;
             merged.els.summary.value = primary.els.summary.value;
             merged.els.description.value = primary.els.description.value;
@@ -5040,7 +5159,11 @@
         // opens it fine) -- used when window.docx didn't load (blocked/slow
         // CDN) or the real docx build threw. Same content/structure as
         // buildLetterDocxBlob.
-        function buildLetterHtmlDocBlob(model, settings, generatedAtDisplay) {
+        // Single source of truth for the letter's HTML content -- used both
+        // by the .docx-fallback download below and by the editable
+        // MailStream preview screen, so the two never drift out of sync
+        // with each other's formatting logic.
+        function buildLetterHtmlBody(model, settings, generatedAtDisplay) {
             const P = CONFIG.parkingDeptLetter;
             const addressLines = (lines) => (lines || '').split('\n').filter(Boolean).map((l) => `<p>${escapeHtml(l)}</p>`).join('');
             const bulletList = (issueIds) => `<ul>${issueIds.map((id) => `<li>${escapeHtml(formatParkingDeptLetterBullet(id))}</li>`).join('')}</ul>`;
@@ -5070,7 +5193,11 @@
                 }
             }
             body += `<p>${escapeHtml(P.letterClosing)}</p><p>Sincerely,</p><p>${escapeHtml(settings.senderName || '')}</p>`;
+            return body;
+        }
 
+        function buildLetterHtmlDocBlob(model, settings, generatedAtDisplay) {
+            const body = buildLetterHtmlBody(model, settings, generatedAtDisplay);
             const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"></head><body>${body}</body></html>`;
             return new Blob([html], { type: 'application/msword' });
         }
@@ -5133,6 +5260,11 @@
                 senderAddressLines: document.getElementById('pdSenderAddress').value.trim(),
                 recipientName: document.getElementById('pdRecipientName').value.trim(),
                 recipientAddressLines: document.getElementById('pdRecipientAddress').value.trim(),
+                recipientAddressLine1: document.getElementById('pdRecipientAddressLine1').value.trim(),
+                recipientAddressLine2: document.getElementById('pdRecipientAddressLine2').value.trim(),
+                recipientCity: document.getElementById('pdRecipientCity').value.trim(),
+                recipientState: document.getElementById('pdRecipientState').value.trim(),
+                recipientZip: document.getElementById('pdRecipientZip').value.trim(),
             };
             msg.textContent = 'Saving...';
             msg.className = 'text-center text-xs font-medium text-detroit-teal';
@@ -5151,6 +5283,7 @@
 
         async function showParkingDeptSettings() {
             document.getElementById('parkingDeptListView').classList.add('hidden');
+            document.getElementById('parkingDeptPreviewView').classList.add('hidden');
             document.getElementById('parkingDeptSettingsView').classList.remove('hidden');
             document.getElementById('pdSettingsMsg').textContent = '';
             const settings = await loadParkingDeptSettings();
@@ -5158,10 +5291,16 @@
             document.getElementById('pdSenderAddress').value = settings.senderAddressLines || '';
             document.getElementById('pdRecipientName').value = settings.recipientName || '';
             document.getElementById('pdRecipientAddress').value = settings.recipientAddressLines || '';
+            document.getElementById('pdRecipientAddressLine1').value = settings.recipientAddressLine1 || '';
+            document.getElementById('pdRecipientAddressLine2').value = settings.recipientAddressLine2 || '';
+            document.getElementById('pdRecipientCity').value = settings.recipientCity || '';
+            document.getElementById('pdRecipientState').value = settings.recipientState || '';
+            document.getElementById('pdRecipientZip').value = settings.recipientZip || '';
         }
 
         function showParkingDeptList() {
             document.getElementById('parkingDeptSettingsView').classList.add('hidden');
+            document.getElementById('parkingDeptPreviewView').classList.add('hidden');
             document.getElementById('parkingDeptListView').classList.remove('hidden');
             renderParkingDeptCandidates();
         }
@@ -5279,6 +5418,17 @@
 
         // --- Generate letter -------------------------------------------------
 
+        // Holds the model/settings/entries for the letter currently open in
+        // the Review Letter screen, plus its Firestore letterId once either
+        // action below has actually finalized it (see
+        // ensureGeneratedParkingDeptLetterFinalized) -- null whenever that
+        // screen isn't open on a freshly-generated (not-yet-finalized)
+        // letter. Both "Download .docx" and "Send via MailStream" read
+        // from this, and either one can finalize it; whichever runs
+        // second reuses the same Firestore record instead of creating a
+        // duplicate.
+        let pendingGeneratedLetter = null;
+
         async function generateParkingDeptLetter() {
             const msg = document.getElementById('parkingDeptGenerateMsg');
             const selectedIds = getSelectedParkingDeptIssueIds();
@@ -5300,10 +5450,60 @@
             const model = buildParkingDeptLetterModel(entries);
             const generatedAt = new Date();
             const generatedAtDisplay = generatedAt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+            const letterHtml = buildLetterHtmlBody(model, settings, generatedAtDisplay);
 
-            msg.textContent = 'Building letter...';
-            msg.className = 'text-center text-xs font-medium text-detroit-teal';
+            pendingGeneratedLetter = { model, settings, entries, generatedAt, generatedAtDisplay, letterId: null };
+            document.getElementById('parkingDeptPreviewBody').innerHTML = letterHtml;
+            document.getElementById('parkingDeptPreviewMsg').textContent = '';
+            msg.textContent = '';
+            document.getElementById('parkingDeptListView').classList.add('hidden');
+            document.getElementById('parkingDeptSettingsView').classList.add('hidden');
+            document.getElementById('parkingDeptPreviewView').classList.remove('hidden');
+        }
 
+        // Creates the parkingDeptLetters Firestore record and flips the
+        // selected issues to 'lettered' -- but only the FIRST time either
+        // "Download .docx" or "Send via MailStream" actually succeeds for
+        // this generated letter (idempotent within one Review Letter
+        // session via pendingGeneratedLetter.letterId); a failed action
+        // must never leave issues stuck 'lettered' with no letter record,
+        // same discipline as submitItem never marking success before
+        // SeeClickFix actually confirms it. Stores the CURRENT (possibly
+        // hand-edited) preview HTML as letterHtml, so a later "Send via
+        // MailStream" -- whether right now or from the letters list days
+        // later -- sends exactly what was reviewed, not a re-derivation
+        // that could drift if history entries change afterward.
+        async function ensureGeneratedParkingDeptLetterFinalized() {
+            if (pendingGeneratedLetter.letterId) return pendingGeneratedLetter.letterId;
+            const { entries, generatedAt, generatedAtDisplay } = pendingGeneratedLetter;
+            const letterHtml = document.getElementById('parkingDeptPreviewBody').innerHTML;
+            const uid = currentUid || await historySignedIn;
+            const letterRef = parkingDeptLettersCollection(uid).doc();
+            const issueIds = entries.map((e) => e.issueId);
+            await letterRef.set({
+                generatedAt: generatedAt.toISOString(),
+                generatedAtDisplay,
+                issueIds,
+                status: 'generated',
+                notifiedAt: null,
+                letterHtml,
+                mailStreamStatus: null,
+            });
+            const batch = firestoreDb.batch();
+            for (const issueId of issueIds) {
+                batch.update(historyCollection(uid).doc(String(issueId)), {
+                    parkingDeptFlag: 'lettered',
+                    parkingDeptLetterId: letterRef.id,
+                });
+            }
+            await batch.commit();
+            pendingGeneratedLetter.letterId = letterRef.id;
+            return letterRef.id;
+        }
+
+        async function downloadGeneratedParkingDeptLetter() {
+            const msg = document.getElementById('parkingDeptPreviewMsg');
+            const { model, settings, generatedAtDisplay } = pendingGeneratedLetter;
             let filename;
             try {
                 filename = await buildAndDownloadParkingDeptLetter(model, settings, generatedAtDisplay);
@@ -5313,39 +5513,165 @@
                 logToConsole(`Could not build Parking Dept letter: ${err instanceof Error ? err.message : err}`, true);
                 return; // nothing marked as lettered yet -- safe to just retry
             }
-
-            // Only after the download actually happened do we record the
-            // letter and flip issues to 'lettered' -- a failed download
-            // must never leave issues stuck in a state that hides them
-            // from a retry (same discipline as submitItem never marking
-            // success before SeeClickFix actually confirms it).
             try {
-                const uid = currentUid || await historySignedIn;
-                const letterRef = parkingDeptLettersCollection(uid).doc();
-                const issueIds = entries.map((e) => e.issueId);
-                await letterRef.set({
-                    generatedAt: generatedAt.toISOString(),
-                    generatedAtDisplay,
-                    issueIds,
-                    status: 'generated',
-                    notifiedAt: null,
-                });
-                const batch = firestoreDb.batch();
-                for (const issueId of issueIds) {
-                    batch.update(historyCollection(uid).doc(String(issueId)), {
-                        parkingDeptFlag: 'lettered',
-                        parkingDeptLetterId: letterRef.id,
-                    });
-                }
-                await batch.commit();
+                await ensureGeneratedParkingDeptLetterFinalized();
                 await refreshParkingDeptLetters();
-                msg.textContent = `Downloaded ${filename}. Mail it, then come back and tap "Mark as Notified" once it's sent.`;
-                msg.className = 'text-center text-xs font-bold text-detroit-dark';
+                pendingGeneratedLetter = null;
+                showParkingDeptList();
+                const listMsg = document.getElementById('parkingDeptGenerateMsg');
+                listMsg.textContent = `Downloaded ${filename}. Mail it, then come back and tap "Mark as Notified" once it's sent.`;
+                listMsg.className = 'text-center text-xs font-bold text-detroit-dark';
             } catch (err) {
                 msg.textContent = `Downloaded ${filename}, but could not save the letter record -- check debug console.`;
                 msg.className = 'text-center text-xs font-medium text-red-600';
                 logToConsole(`Downloaded the letter but could not write Firestore records: ${err instanceof Error ? err.message : err}`, true);
             }
+        }
+
+        async function sendGeneratedParkingDeptLetterViaMailStream() {
+            try {
+                const letterId = await ensureGeneratedParkingDeptLetterFinalized();
+                await refreshParkingDeptLetters();
+                await sendParkingDeptLetterViaMailStream(letterId, document.getElementById('parkingDeptPreviewMsg'));
+                pendingGeneratedLetter = null;
+            } catch (err) {
+                const msg = document.getElementById('parkingDeptPreviewMsg');
+                msg.textContent = 'Could not save the letter record -- check debug console.';
+                msg.className = 'text-center text-xs font-medium text-red-600';
+                logToConsole(`Could not save the letter record before sending via MailStream: ${err instanceof Error ? err.message : err}`, true);
+            }
+        }
+
+        // --- Send via MailStream (real printing + mailing, real money) ------
+
+        // MailStream's request/response shapes (endpoint, auth, field
+        // names, the fact front_artwork accepts a raw HTML string) come
+        // from https://docs.my.mailstream.app (this account's own OpenAPI
+        // docs -- signed in as Adam Schubatis), not published marketing
+        // copy. NOT independently verified against a real send in this
+        // environment -- written defensively (see postMailStreamLetter's
+        // CORS-proxy fallback), same candor as the SeeClickFix comment
+        // code above: smoke-test before relying on this at scale.
+        // Specifically unverified: whether a long, multi-page-worth-of-HTML
+        // letter is handled or silently truncated/rejected (the docs only
+        // guarantee multi-page for PDF artwork), and whether
+        // address_placement: 'top_first_page' actually lines up with where
+        // this letter's own recipient address block falls on the page.
+        async function postMailStreamLetter(body, idempotencyKey) {
+            const targetUrl = 'https://my.mailstream.app/api/v1/letters';
+            const headers = {
+                'Authorization': `Bearer ${CONFIG.mailStreamApiKey}`,
+                'Content-Type': 'application/json',
+                'Idempotency-Key': idempotencyKey,
+            };
+            try {
+                const response = await fetch(targetUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+                if (!response.ok) throw new Error(`MailStream API error (${response.status}): ${await response.text()}`);
+                return response.json();
+            } catch (directErr) {
+                logToConsole(`Direct MailStream request failed (likely CORS, since this is a browser-only app with no backend) -- retrying via the same CORS proxy used for SeeClickFix: ${directErr instanceof Error ? directErr.message : directErr}`, true);
+                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+                const response = await fetch(proxyUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+                if (!response.ok) throw new Error(`MailStream API error via proxy (${response.status}): ${await response.text()}`);
+                return response.json();
+            }
+        }
+
+        // Sends an already-finalized letter (Firestore doc `letterId`,
+        // which must have letterHtml set -- see
+        // ensureGeneratedParkingDeptLetterFinalized) via MailStream. Usable
+        // both right after generating a letter and, later, from the
+        // Letters Awaiting Notification list for one already downloaded.
+        // `msgEl`, if given, gets status text; otherwise falls back to
+        // logToConsole only.
+        async function sendParkingDeptLetterViaMailStream(letterId, msgEl) {
+            await mailStreamKeyReady;
+            if (!CONFIG.mailStreamApiKey) {
+                const text = 'MailStream API key not available (Firestore config/secrets doc missing, empty, or unreadable).';
+                if (msgEl) { msgEl.textContent = text; msgEl.className = 'text-center text-xs font-medium text-red-600'; }
+                logToConsole(text, true);
+                return;
+            }
+
+            const settings = await loadParkingDeptSettings();
+            if (!settings.recipientAddressLine1 || !settings.recipientCity || !settings.recipientState || !settings.recipientZip) {
+                const text = 'Please fill in the recipient address fields (for MailStream) in Mailing Address Settings first.';
+                if (msgEl) { msgEl.textContent = text; msgEl.className = 'text-center text-xs font-medium text-red-600'; }
+                showParkingDeptSettings();
+                return;
+            }
+
+            let letter = parkingDeptLettersCache.find((l) => l.id === letterId);
+            if (!letter) {
+                const uid = currentUid || await historySignedIn;
+                const doc = await parkingDeptLettersCollection(uid).doc(letterId).get();
+                if (!doc.exists) { logToConsole(`Letter ${letterId} not found.`, true); return; }
+                letter = { id: doc.id, ...doc.data() };
+            }
+            if (!letter.letterHtml) {
+                const text = 'This letter has no saved content to send (it predates the MailStream feature) -- generate a new letter instead.';
+                if (msgEl) { msgEl.textContent = text; msgEl.className = 'text-center text-xs font-medium text-red-600'; }
+                return;
+            }
+
+            if (!confirm(`Send this letter via MailStream? This prints and MAILS A REAL PHYSICAL LETTER through the U.S. Postal Service and costs real money. This can't be undone.`)) return;
+
+            const uid = currentUid || await historySignedIn;
+            const letterRef = parkingDeptLettersCollection(uid).doc(letterId);
+
+            // Written to Firestore BEFORE the network call so a retry after
+            // a failure/timeout reuses the exact same idempotency key --
+            // true server-side dedupe (MailStream honors Idempotency-Key),
+            // stronger than the in-session-only Set used for SeeClickFix
+            // comments above.
+            const idempotencyKey = letter.mailStreamIdempotencyKey || crypto.randomUUID();
+            if (!letter.mailStreamIdempotencyKey) {
+                await letterRef.update({ mailStreamIdempotencyKey: idempotencyKey });
+            }
+
+            if (msgEl) { msgEl.textContent = 'Sending via MailStream...'; msgEl.className = 'text-center text-xs font-medium text-detroit-teal'; }
+
+            const body = {
+                name: `Parking Dept Letter - ${letter.generatedAtDisplay}`,
+                description: null,
+                to_address: {
+                    first_name: '',
+                    last_name: '',
+                    company: settings.recipientName || DEFAULT_PARKING_DEPT_RECIPIENT_NAME,
+                    address_line1: settings.recipientAddressLine1,
+                    address_line2: settings.recipientAddressLine2 || '',
+                    address_city: settings.recipientCity,
+                    address_state: settings.recipientState,
+                    address_zip: settings.recipientZip,
+                },
+                size: '11x8.5',
+                mail_type: 'first_class',
+                color: false,
+                double_sided: false,
+                address_placement: 'top_first_page',
+                return_envelope: false,
+                front_artwork: letter.letterHtml,
+            };
+
+            try {
+                const result = await postMailStreamLetter(body, idempotencyKey);
+                await letterRef.update({
+                    mailStreamLetterUuid: result.uuid,
+                    mailStreamStatus: 'sent',
+                    mailStreamSentAt: new Date().toISOString(),
+                });
+                logToConsole(`Sent letter ${letterId} via MailStream (uuid ${result.uuid}, status "${result.status}").`);
+                if (msgEl) { msgEl.textContent = 'Sent via MailStream. Come back and tap "Mark as Notified" once it actually arrives.'; msgEl.className = 'text-center text-xs font-bold text-detroit-dark'; }
+            } catch (err) {
+                logToConsole(`Could not send letter ${letterId} via MailStream: ${err instanceof Error ? err.message : err}`, true);
+                try {
+                    await letterRef.update({ mailStreamStatus: 'failed' });
+                } catch (writeErr) {
+                    logToConsole(`Also could not record the MailStream failure in Firestore: ${writeErr instanceof Error ? writeErr.message : writeErr}`, true);
+                }
+                if (msgEl) { msgEl.textContent = 'Could not send via MailStream -- check debug console. Safe to retry.'; msgEl.className = 'text-center text-xs font-medium text-red-600'; }
+            }
+            await refreshParkingDeptLetters();
         }
 
         // --- Pending letters: notify / discard / re-download ----------------
@@ -5377,14 +5703,21 @@
             container.innerHTML = pending.map((letter) => {
                 const remaining = historyCache.filter((e) => e.parkingDeptLetterId === letter.id && e.parkingDeptFlag === 'lettered').length;
                 const notifiedCount = letter.issueIds.length - remaining;
+                const mailStreamStatusText = letter.mailStreamStatus === 'sent'
+                    ? `Sent via MailStream${letter.mailStreamSentAt ? ` ${new Date(letter.mailStreamSentAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}`
+                    : letter.mailStreamStatus === 'failed'
+                        ? 'MailStream send failed -- safe to retry'
+                        : 'Not sent via MailStream';
+                const canSendViaMailStream = letter.mailStreamStatus !== 'sent' && !!letter.letterHtml;
                 return `
                     <div class="bg-white rounded-lg shadow-sm p-3">
                         <p class="text-sm font-semibold text-detroit-dark">${escapeHtml(letter.generatedAtDisplay)} &middot; ${letter.issueIds.length} incident${letter.issueIds.length === 1 ? '' : 's'}</p>
-                        <p class="text-[10px] text-slate-400 mb-2">${notifiedCount > 0 ? `${notifiedCount} of ${letter.issueIds.length} notified so far` : 'Not yet notified'}</p>
+                        <p class="text-[10px] text-slate-400 mb-2">${notifiedCount > 0 ? `${notifiedCount} of ${letter.issueIds.length} notified so far` : 'Not yet notified'} &middot; ${escapeHtml(mailStreamStatusText)}</p>
                         <div class="flex gap-2">
                             <button class="flex-1 text-xs bg-detroit-teal text-white font-semibold py-2 rounded-lg" onclick="markParkingDeptLetterNotified('${letter.id}')">Mark as Notified</button>
                             <button class="flex-1 text-xs bg-white border border-detroit-mint text-detroit-navy font-semibold py-2 rounded-lg" onclick="downloadParkingDeptLetterAgain('${letter.id}')">Download Again</button>
                         </div>
+                        ${canSendViaMailStream ? `<button class="w-full text-xs bg-white border border-detroit-mint text-detroit-navy font-semibold py-2 rounded-lg mt-2" onclick="sendParkingDeptLetterViaMailStream('${letter.id}')">Send via MailStream</button>` : ''}
                         <button class="w-full text-xs text-red-600 font-semibold mt-2" onclick="discardParkingDeptLetter('${letter.id}')">Discard Letter</button>
                     </div>
                 `;

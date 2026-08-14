@@ -66,9 +66,12 @@ service cloud.firestore {
         && request.auth.token.email_verified == true;
     }
 
-    // Runtime secrets (config/secrets: { geminiApiKey }) that shouldn't live
-    // in config.js, since that file is committed to a public repo and
-    // Google auto-revokes any service-account-bound key it finds there.
+    // Runtime secrets (config/secrets: { geminiApiKey, mailStreamApiKey })
+    // that shouldn't live in config.js, since that file is committed to a
+    // public repo -- Google auto-revokes any service-account-bound key it
+    // finds there, and a MailStream key left in a public repo is worse:
+    // anyone could use it to print and mail real letters on this account's
+    // dime.
     // Read-only from the app -- no allow write, so these can only be set
     // via the Firebase Console, never overwritten by client code.
     match /config/{document} {
