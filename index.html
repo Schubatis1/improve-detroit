@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#19a696">
-    <title>You Can't Park There (v3.29.2)</title>
+    <title>You Can't Park There (v3.30.0)</title>
     <!-- Detroit brand typography: Montserrat for headings, per the City of Detroit style guide -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -37,7 +37,7 @@
          file -- bump it (matching APP_VERSION below) whenever config.js or
          this file changes, so a browser that loaded the page just before a
          deploy doesn't keep running stale config after a normal refresh. -->
-    <script src="config.js?v=3.29.2"></script>
+    <script src="config.js?v=3.30.0"></script>
     <!-- Firebase (compat build, so it works as a plain global like the rest
          of this no-build page) -- syncs submission history to Firestore. -->
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -455,6 +455,13 @@
                     Send via MailStream
                 </button>
                 <p id="parkingDeptPreviewMsg" class="text-center text-xs font-medium"></p>
+                <!-- Populated by renderMailStreamResult once a send actually
+                     succeeds -- MailStream renders the real PDF/thumbnail as
+                     part of creating the letter (there's no separate
+                     dry-run/preview-only endpoint), so this is shown AFTER
+                     the letter already exists on their side but WHILE it's
+                     still cancellable, not as a true pre-send preview. -->
+                <div id="parkingDeptMailStreamResult" class="hidden bg-white border border-detroit-mint rounded-lg p-3 mt-2"></div>
             </div>
         </div>
     </div>
@@ -691,7 +698,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.29.2</p>
+        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.30.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -851,14 +858,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.29.2)</p>
+            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.30.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.29.2)...
+            App initialized (v3.30.0)...
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -870,13 +877,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.29.2';
+        const APP_VERSION = '3.30.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.30.0', date: '2026-08-14', notes: [
+                'Sending a letter via MailStream now shows the real generated preview (thumbnail + link to the full PDF) right after creating it, with a "Cancel This Send" button -- available both right after sending and later from the Letters Awaiting Notification list, for as long as MailStream\'s own cancellation window allows.',
+            ] },
             { version: '3.29.2', date: '2026-08-14', notes: [
                 'Fixed "Send via MailStream" printing its own address barcode directly on top of the letter\'s own recipient address text -- confirmed with a real send and its PDF preview. Switched address placement so MailStream\'s address zone gets its own page instead of overlapping the letter.',
             ] },
@@ -5597,6 +5607,9 @@
             pendingGeneratedLetter = { model, settings, entries, generatedAt, generatedAtDisplay, letterId: null };
             document.getElementById('parkingDeptPreviewBody').innerHTML = letterHtml;
             document.getElementById('parkingDeptPreviewMsg').textContent = '';
+            const resultEl = document.getElementById('parkingDeptMailStreamResult');
+            resultEl.classList.add('hidden');
+            resultEl.innerHTML = '';
             msg.textContent = '';
             document.getElementById('parkingDeptListView').classList.add('hidden');
             document.getElementById('parkingDeptSettingsView').classList.add('hidden');
@@ -5745,6 +5758,100 @@
             }
         }
 
+        // Cancels an already-created MailStream send. Confirmed live
+        // (2026-08-14): POST /api/v1/campaigns/{campaignUuid}/cancel, no
+        // body, returns { uuid, cancelledMailables, detachedFromPrintQueue,
+        // creditsRefunded }. Only works inside this account's cancellation
+        // window (Settings -> Account -> "Cancellation Window", 60 minutes
+        // by default) -- past that, MailStream will 4xx and the letter is
+        // going to actually print/mail regardless of what this app shows.
+        async function cancelMailStreamCampaign(campaignUuid) {
+            const targetUrl = `https://my.mailstream.app/api/v1/campaigns/${campaignUuid}/cancel`;
+            const headers = {
+                'Accept': 'application/json',
+                'Authorization': `Bearer ${CONFIG.mailStreamApiKey}`,
+                'Content-Type': 'application/json',
+            };
+            try {
+                const response = await fetch(targetUrl, { method: 'POST', headers });
+                if (!response.ok) throw new Error(`MailStream cancel error (${response.status}): ${await response.text()}`);
+                return response.json();
+            } catch (directErr) {
+                logToConsole(`Direct MailStream cancel request failed -- retrying via CORS proxy: ${directErr instanceof Error ? directErr.message : directErr}`, true);
+                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+                const response = await fetch(proxyUrl, { method: 'POST', headers });
+                if (!response.ok) throw new Error(`MailStream cancel error via proxy (${response.status}): ${await response.text()}`);
+                return response.json();
+            }
+        }
+
+        // Renders the MailStream result panel (thumbnail, link to the full
+        // PDF, scheduled send date, Cancel button) into `container` for a
+        // letter that has actually been sent. Shared by the Review Letter
+        // screen (right after a send) and the Letters Awaiting Notification
+        // list (for one sent in a past session) so both look identical and
+        // both cancel through the same function.
+        function renderMailStreamResult(container, letter) {
+            if (!container) return;
+            if (!letter.mailStreamLetterUuid) {
+                container.classList.add('hidden');
+                container.innerHTML = '';
+                return;
+            }
+            container.classList.remove('hidden');
+            if (letter.mailStreamStatus === 'cancelled') {
+                container.innerHTML = `
+                    <p class="text-xs font-bold text-detroit-navy uppercase mb-1">MailStream Send Cancelled</p>
+                    <p class="text-[10px] text-slate-400">Cancelled ${escapeHtml(new Date(letter.mailStreamCancelledAt).toLocaleString())}. Not printed or mailed. Use "Send via MailStream" above/on the list to try again.</p>
+                `;
+                return;
+            }
+            const thumb = letter.mailStreamThumbnailUrl
+                ? `<img src="${escapeHtml(letter.mailStreamThumbnailUrl)}" alt="Letter preview" class="w-full max-w-xs rounded border border-slate-200 mb-2 cursor-zoom-in" onclick="openLightbox('${escapeHtml(letter.mailStreamThumbnailUrl)}')">`
+                : '';
+            container.innerHTML = `
+                <p class="text-xs font-bold text-detroit-navy uppercase mb-1">MailStream Preview</p>
+                ${thumb}
+                ${letter.mailStreamPreviewUrl ? `<a href="${escapeHtml(letter.mailStreamPreviewUrl)}" target="_blank" rel="noopener" class="text-xs text-detroit-teal font-semibold underline block mb-1">View full PDF</a>` : ''}
+                <p class="text-[10px] text-slate-400 mb-2">${letter.mailStreamSendDate ? `Scheduled to print/mail ${escapeHtml(letter.mailStreamSendDate)}. ` : ''}Still cancellable for a limited time after sending (this account's cancellation window, set in MailStream's own Account settings) -- once that passes this WILL actually print and mail regardless of what's shown here.</p>
+                <button class="w-full text-xs bg-red-50 border border-red-200 text-red-600 font-semibold py-2 rounded-lg" onclick="cancelParkingDeptLetterMailStreamSend('${letter.id}')">Cancel This Send</button>
+            `;
+        }
+
+        // Cancels a letter's MailStream send (see cancelMailStreamCampaign)
+        // and records it -- callable both from the Review Letter screen's
+        // result panel and from a letter card in the Letters Awaiting
+        // Notification list.
+        async function cancelParkingDeptLetterMailStreamSend(letterId) {
+            let letter = parkingDeptLettersCache.find((l) => l.id === letterId);
+            const uid = currentUid || await historySignedIn;
+            if (!letter) {
+                const doc = await parkingDeptLettersCollection(uid).doc(letterId).get();
+                if (!doc.exists) { logToConsole(`Letter ${letterId} not found.`, true); return; }
+                letter = { id: doc.id, ...doc.data() };
+            }
+            if (!letter.mailStreamCampaignUuid) {
+                logToConsole(`Letter ${letterId} has no MailStream campaign to cancel.`, true);
+                return;
+            }
+            if (!confirm('Cancel this letter\'s MailStream send? If it\'s still within the cancellation window, it will NOT be printed or mailed.')) return;
+
+            const letterRef = parkingDeptLettersCollection(uid).doc(letterId);
+            try {
+                const result = await cancelMailStreamCampaign(letter.mailStreamCampaignUuid);
+                await letterRef.update({
+                    mailStreamStatus: 'cancelled',
+                    mailStreamCancelledAt: new Date().toISOString(),
+                });
+                logToConsole(`Cancelled letter ${letterId}'s MailStream send (${result.cancelledMailables} mailable(s) cancelled).`);
+            } catch (err) {
+                logToConsole(`Could not cancel letter ${letterId}'s MailStream send -- it may be past the cancellation window and will print/mail regardless: ${err instanceof Error ? err.message : err}`, true);
+            }
+            await refreshParkingDeptLetters();
+            const previewLetter = parkingDeptLettersCache.find((l) => l.id === letterId);
+            if (previewLetter) renderMailStreamResult(document.getElementById('parkingDeptMailStreamResult'), previewLetter);
+        }
+
         // Sends an already-finalized letter (Firestore doc `letterId`,
         // which must have letterHtml set -- see
         // ensureGeneratedParkingDeptLetterFinalized) via MailStream. Usable
@@ -5782,7 +5889,7 @@
                 return;
             }
 
-            if (!confirm(`Send this letter via MailStream? This prints and MAILS A REAL PHYSICAL LETTER through the U.S. Postal Service and costs real money. This can't be undone.`)) return;
+            if (!confirm(`Send this letter via MailStream? This creates a REAL, billable print/mail job through the U.S. Postal Service. It's cancellable for a limited time afterward (this account's cancellation window) -- after that it WILL actually print and mail.`)) return;
 
             const uid = currentUid || await historySignedIn;
             const letterRef = parkingDeptLettersCollection(uid).doc(letterId);
@@ -5825,11 +5932,15 @@
                 const result = await postMailStreamLetter(body, idempotencyKey);
                 await letterRef.update({
                     mailStreamLetterUuid: result.uuid,
+                    mailStreamCampaignUuid: result.campaign_uuid || null,
+                    mailStreamPreviewUrl: result.url || null,
+                    mailStreamThumbnailUrl: result.thumbnails?.[0]?.large || result.thumbnails?.[0]?.medium || null,
+                    mailStreamSendDate: result.send_date || null,
                     mailStreamStatus: 'sent',
                     mailStreamSentAt: new Date().toISOString(),
                 });
                 logToConsole(`Sent letter ${letterId} via MailStream (uuid ${result.uuid}, status "${result.status}").`);
-                if (msgEl) { msgEl.textContent = 'Sent via MailStream. Come back and tap "Mark as Notified" once it actually arrives.'; msgEl.className = 'text-center text-xs font-bold text-detroit-dark'; }
+                if (msgEl) { msgEl.textContent = 'Created on MailStream -- review the preview below before it prints. Still cancellable for a limited time.'; msgEl.className = 'text-center text-xs font-bold text-detroit-dark'; }
             } catch (err) {
                 logToConsole(`Could not send letter ${letterId} via MailStream: ${err instanceof Error ? err.message : err}`, true);
                 try {
@@ -5840,6 +5951,8 @@
                 if (msgEl) { msgEl.textContent = 'Could not send via MailStream -- check debug console. Safe to retry.'; msgEl.className = 'text-center text-xs font-medium text-red-600'; }
             }
             await refreshParkingDeptLetters();
+            const sentLetter = parkingDeptLettersCache.find((l) => l.id === letterId);
+            if (sentLetter) renderMailStreamResult(document.getElementById('parkingDeptMailStreamResult'), sentLetter);
         }
 
         // --- Pending letters: notify / discard / re-download ----------------
@@ -5873,9 +5986,11 @@
                 const notifiedCount = letter.issueIds.length - remaining;
                 const mailStreamStatusText = letter.mailStreamStatus === 'sent'
                     ? `Sent via MailStream${letter.mailStreamSentAt ? ` ${new Date(letter.mailStreamSentAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}`
-                    : letter.mailStreamStatus === 'failed'
-                        ? 'MailStream send failed -- safe to retry'
-                        : 'Not sent via MailStream';
+                    : letter.mailStreamStatus === 'cancelled'
+                        ? 'MailStream send cancelled'
+                        : letter.mailStreamStatus === 'failed'
+                            ? 'MailStream send failed -- safe to retry'
+                            : 'Not sent via MailStream';
                 const canSendViaMailStream = letter.mailStreamStatus !== 'sent' && !!letter.letterHtml;
                 return `
                     <div class="bg-white rounded-lg shadow-sm p-3">
@@ -5886,10 +6001,16 @@
                             <button class="flex-1 text-xs bg-white border border-detroit-mint text-detroit-navy font-semibold py-2 rounded-lg" onclick="downloadParkingDeptLetterAgain('${letter.id}')">Download Again</button>
                         </div>
                         ${canSendViaMailStream ? `<button class="w-full text-xs bg-white border border-detroit-mint text-detroit-navy font-semibold py-2 rounded-lg mt-2" onclick="sendParkingDeptLetterViaMailStream('${letter.id}')">Send via MailStream</button>` : ''}
+                        <div id="mailStreamResult-${letter.id}" class="hidden mt-2"></div>
                         <button class="w-full text-xs text-red-600 font-semibold mt-2" onclick="discardParkingDeptLetter('${letter.id}')">Discard Letter</button>
                     </div>
                 `;
             }).join('');
+            // renderMailStreamResult needs live elements, which only exist
+            // once the innerHTML assignment above has actually run -- see
+            // its own comment for why this is shared with the Review
+            // Letter screen's identical panel.
+            pending.forEach((letter) => renderMailStreamResult(document.getElementById(`mailStreamResult-${letter.id}`), letter));
         }
 
         // Tracks issue ids that DEFINITELY got a real SeeClickFix comment
