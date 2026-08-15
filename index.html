@@ -895,13 +895,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.33.0';
+        const APP_VERSION = '3.33.1';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.33.1', date: '2026-08-15', notes: [
+                'Fixed the CORS proxy (api/proxy.js) silently dropping the body of every multipart upload -- SeeClickFix submissions were failing with a generic 400 "could not be understood" error, and Plate Recognizer lookups with "Upload field cannot be empty," because Vercel never actually handed the proxy the raw request body for content types it doesn\'t auto-parse (that includes multipart/form-data). The proxy now reads the raw request stream itself instead of relying on Vercel\'s automatic body parsing.',
+            ] },
             { version: '3.33.0', date: '2026-08-15', notes: [
                 'Geofences can now be a polygon instead of just a circle -- Geofence Maintenance has a new Shape toggle (Circle/Polygon); polygon vertices are entered as a "lat, lng" list or dragged directly on the map, and matching uses a real point-in-polygon test instead of a radius. Added the Little Caesars Arena geofence as a quadrilateral, active after 4pm -- run `npm run seed-geofences` to add it to Firestore.',
             ] },

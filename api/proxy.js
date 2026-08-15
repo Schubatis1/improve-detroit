@@ -20,7 +20,26 @@ const ALLOWED_HOSTS = new Set([
 const REQUEST_HEADERS_TO_FORWARD = ['authorization', 'content-type', 'accept', 'idempotency-key'];
 const RESPONSE_HEADERS_TO_FORWARD = ['content-type'];
 
-module.exports = async function handler(req, res) {
+// Vercel's automatic body parser only understands application/json,
+// application/x-www-form-urlencoded, and text/plain -- for anything else
+// (crucially, multipart/form-data image uploads) it leaves req.body
+// undefined rather than handing back a raw Buffer. Relying on req.body
+// here meant every multipart POST (SeeClickFix issue creation, Plate
+// Recognizer lookups) was forwarded upstream with a valid
+// Content-Type/boundary header but an empty body -- Plate Recognizer
+// reported its file field as empty, and SeeClickFix's Rack parser choked
+// on a boundary with nothing behind it and returned a generic HTML 400.
+// Disabling the built-in parser and reading the raw stream ourselves
+// forwards every content type byte-for-byte, no special-casing needed.
+async function readRawBody(req) {
+    const chunks = [];
+    for await (const chunk of req) {
+        chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    }
+    return Buffer.concat(chunks);
+}
+
+async function handler(req, res) {
     const targetUrl = req.query.url;
     if (!targetUrl) {
         res.status(400).json({ error: 'Missing "url" query parameter' });
@@ -46,16 +65,7 @@ module.exports = async function handler(req, res) {
         if (value) headers[name] = value;
     }
 
-    // Vercel's default body parser gives us: a parsed object for JSON, or a
-    // raw Buffer for anything else (including multipart/form-data image
-    // uploads) -- Buffers/strings go straight through untouched so
-    // multipart boundaries stay intact; JSON is re-serialized.
-    let body;
-    if (req.method !== 'GET' && req.method !== 'HEAD' && req.body !== undefined && req.body !== null) {
-        body = Buffer.isBuffer(req.body) || typeof req.body === 'string'
-            ? req.body
-            : JSON.stringify(req.body);
-    }
+    const body = (req.method === 'GET' || req.method === 'HEAD') ? undefined : await readRawBody(req);
 
     let upstream;
     try {
@@ -71,4 +81,7 @@ module.exports = async function handler(req, res) {
     }
     res.status(upstream.status);
     res.send(Buffer.from(await upstream.arrayBuffer()));
-};
+}
+
+module.exports = handler;
+module.exports.config = { api: { bodyParser: false } };
