@@ -219,7 +219,10 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
 
     await page.getByPlaceholder('Enter notes').fill(notes);
     await page.getByPlaceholder('Geolocation (preferred)').fill(`${entry.lat}, ${entry.lng}`);
-    await page.locator('select').nth(2).selectOption({ label: METRO_CITY_DETROIT });
+    // entry.metroCity is set client-side from the photo's EXIF GPS (see
+    // index.html's resolveMetroCity) -- falls back to Detroit for any
+    // older history entry written before that field existed.
+    await page.locator('select').nth(2).selectOption({ label: entry.metroCity || METRO_CITY_DETROIT });
 
     // The date field is a read-only custom calendar widget (fill() doesn't
     // work -- "element is not editable"). Each day cell is a <td

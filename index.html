@@ -877,13 +877,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.31.0';
+        const APP_VERSION = '3.32.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.32.0', date: '2026-08-14', notes: [
+                'Reports whose photo GPS is inside New York City now auto-submit to Bike Lane Uprising with Metro City set to "New York - NY" instead of Detroit -- useful for out-of-town trips. Everything else about the report (Improve Detroit submission, geofences, etc.) is unaffected since those are Detroit-only anyway.',
+            ] },
             { version: '3.31.0', date: '2026-08-14', notes: [
                 'Replaced the free, rate-limited corsproxy.io dependency with a first-party Vercel serverless function (api/proxy.js) for every SeeClickFix, Plate Recognizer, and MailStream call that needs to route around CORS -- same-origin now, so it\'s no longer subject to corsproxy.io\'s own throttling/dropped-request issues on top of the upstream APIs\' own limits.',
             ] },
@@ -1272,6 +1275,26 @@
             if (start != null && end == null) return hour >= start;
             if (start == null && end != null) return hour < end;
             return start <= end ? (hour >= start && hour < end) : (hour >= start || hour < end);
+        }
+
+        // Bike Lane Uprising's "Metro City" dropdown option labels, copied
+        // verbatim from the live form (see scripts/submit-to-blu.js's
+        // PLATE_STATE_*/METRO_CITY_DETROIT comment) -- must match exactly.
+        const METRO_CITY_DETROIT = 'Detroit - MI';
+        const METRO_CITY_NEW_YORK = 'New York - NY';
+
+        // Rough bounding box covering all five NYC boroughs, generously
+        // padded -- good enough to tell "this photo was taken on a work
+        // trip to New York" from "this is Detroit", without needing a
+        // reverse-geocode round trip just to pick a metro city.
+        const NEW_YORK_CITY_BOUNDS = { minLat: 40.47, maxLat: 40.92, minLng: -74.26, maxLng: -73.68 };
+
+        function resolveMetroCity(lat, lng) {
+            const b = NEW_YORK_CITY_BOUNDS;
+            if (lat >= b.minLat && lat <= b.maxLat && lng >= b.minLng && lng <= b.maxLng) {
+                return METRO_CITY_NEW_YORK;
+            }
+            return METRO_CITY_DETROIT;
         }
 
         // Finds the first configured geofence (if any) containing (lat, lng)
@@ -2231,7 +2254,8 @@
 
                 item.lat = gps.latitude;
                 item.lng = gps.longitude;
-                logToConsole(`[${item.file.name}] GPS found: ${item.lat.toFixed(5)}, ${item.lng.toFixed(5)}`);
+                item.metroCity = resolveMetroCity(item.lat, item.lng);
+                logToConsole(`[${item.file.name}] GPS found: ${item.lat.toFixed(5)}, ${item.lng.toFixed(5)} (metro: ${item.metroCity})`);
 
                 const rawDate = exifData?.DateTimeOriginal || exifData?.CreateDate || new Date(item.file.lastModified);
                 const photoDateObj = new Date(rawDate);
@@ -3087,6 +3111,7 @@
                 marker: null,
                 lat: primary.lat,
                 lng: primary.lng,
+                metroCity: primary.metroCity,
                 vehicleQuestionId: primary.vehicleQuestionId,
                 photoDateObj: primary.photoDateObj,
                 matchedGeofence: primary.matchedGeofence,
@@ -3783,6 +3808,7 @@
                 // needing to still be on this device.
                 lat: item.lat,
                 lng: item.lng,
+                metroCity: item.metroCity || null,
                 plate: item.els.plate.value.trim() || null,
                 plateIds,
                 photoTakenAt: item.photoDateObj ? item.photoDateObj.toISOString() : null,
@@ -4120,6 +4146,7 @@
                 bluCategory,
                 lat: pos.lat,
                 lng: pos.lng,
+                metroCity: resolveMetroCity(pos.lat, pos.lng),
             };
 
             msg.textContent = 'Saving...';
