@@ -85,6 +85,11 @@ window.APP_CONFIG = {
     // bluCategory, improveDetroitCategory, daysOfWeek, startHour/endHour
     // (time-of-day bounds, both null = 24/7), and
     // detect/reportRepeatOffenders + detect/reportRepeatIncidents booleans.
+    // A geofence can also be a polygon instead of a circle: set `polygon`
+    // to an array of 3+ {lat, lng} vertices (radiusMeters is then ignored;
+    // lat/lng still hold the polygon's centroid, for map centering/list
+    // display) -- see geofenceContainsPoint/pointInPolygon. The Geofence
+    // Maintenance screen's Shape toggle (Circle/Polygon) edits either kind.
     // The first matching *and currently active* geofence wins if more than
     // one overlaps. Run scripts/seed-geofences.js once against a fresh
     // Firestore project to create the starting set (GAR Building valet

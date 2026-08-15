@@ -189,19 +189,37 @@
                     <label class="text-xs font-bold text-detroit-navy uppercase">Title</label>
                     <input type="text" id="gfTitle" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
                 </div>
-                <div class="grid grid-cols-2 gap-2">
-                    <div>
-                        <label class="text-xs font-bold text-detroit-navy uppercase">Latitude</label>
-                        <input type="number" step="any" id="gfLat" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
-                    </div>
-                    <div>
-                        <label class="text-xs font-bold text-detroit-navy uppercase">Longitude</label>
-                        <input type="number" step="any" id="gfLng" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Shape</label>
+                    <div class="flex gap-4 mt-1">
+                        <label class="flex items-center gap-1 text-xs font-medium text-detroit-dark">
+                            <input type="radio" name="gfShape" id="gfShapeCircle" value="circle" checked> Circle
+                        </label>
+                        <label class="flex items-center gap-1 text-xs font-medium text-detroit-dark">
+                            <input type="radio" name="gfShape" id="gfShapePolygon" value="polygon"> Polygon
+                        </label>
                     </div>
                 </div>
-                <div>
-                    <label class="text-xs font-bold text-detroit-navy uppercase">Distance (meters)</label>
-                    <input type="number" step="any" min="1" id="gfRadius" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                <div id="gfCircleFields">
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="text-xs font-bold text-detroit-navy uppercase">Latitude</label>
+                            <input type="number" step="any" id="gfLat" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-detroit-navy uppercase">Longitude</label>
+                            <input type="number" step="any" id="gfLng" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                        </div>
+                    </div>
+                    <div class="mt-2">
+                        <label class="text-xs font-bold text-detroit-navy uppercase">Distance (meters)</label>
+                        <input type="number" step="any" min="1" id="gfRadius" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                    </div>
+                </div>
+                <div id="gfPolygonFields" class="hidden">
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Points</label>
+                    <textarea id="gfPolygonPoints" rows="5" placeholder="One vertex per line, in order: lat, lng&#10;42.338955, -83.057394&#10;42.339672, -83.056902" class="w-full text-sm font-mono border border-detroit-mint rounded px-2 py-1 mt-1"></textarea>
+                    <p class="text-[10px] text-slate-400 mt-1">3 or more points, one <code>lat, lng</code> pair per line. Drag a map pin to adjust a vertex, or edit the list directly.</p>
                 </div>
                 <div>
                     <label class="text-xs font-bold text-detroit-navy uppercase">Map</label>
@@ -877,13 +895,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.32.0';
+        const APP_VERSION = '3.33.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.33.0', date: '2026-08-15', notes: [
+                'Geofences can now be a polygon instead of just a circle -- Geofence Maintenance has a new Shape toggle (Circle/Polygon); polygon vertices are entered as a "lat, lng" list or dragged directly on the map, and matching uses a real point-in-polygon test instead of a radius. Added the Little Caesars Arena geofence as a quadrilateral, active after 4pm -- run `npm run seed-geofences` to add it to Firestore.',
+            ] },
             { version: '3.32.0', date: '2026-08-14', notes: [
                 'Reports whose photo GPS is inside New York City now auto-submit to Bike Lane Uprising with Metro City set to "New York - NY" instead of Detroit -- useful for out-of-town trips. Everything else about the report (Improve Detroit submission, geofences, etc.) is unaffected since those are Detroit-only anyway.',
             ] },
@@ -1227,6 +1248,43 @@
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         }
 
+        // Ray-casting point-in-polygon test (even-odd rule). `polygon` is an
+        // ordered array of {lat, lng} vertices -- the last vertex connects
+        // back to the first implicitly, so callers don't need to repeat it.
+        // Good enough for the small, city-block-scale shapes geofences use;
+        // doesn't need to account for antimeridian wraparound or geodesic
+        // curvature at this scale.
+        function pointInPolygon(lat, lng, polygon) {
+            let inside = false;
+            for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+                const a = polygon[i], b = polygon[j];
+                const crosses = (a.lat > lat) !== (b.lat > lat)
+                    && lng < (b.lng - a.lng) * (lat - a.lat) / (b.lat - a.lat) + a.lng;
+                if (crosses) inside = !inside;
+            }
+            return inside;
+        }
+
+        function polygonCentroid(polygon) {
+            return {
+                lat: polygon.reduce((sum, p) => sum + p.lat, 0) / polygon.length,
+                lng: polygon.reduce((sum, p) => sum + p.lng, 0) / polygon.length,
+            };
+        }
+
+        // Whether (lat, lng) falls inside a geofence's shape. Geofences with
+        // 3+ points in `polygon` use a true point-in-polygon test; every
+        // other geofence (the original/default shape) falls back to the
+        // classic center point + radiusMeters circle. lat/lng on a polygon
+        // geofence still holds its centroid (see saveGeofenceForm), just for
+        // map centering/list display -- matching itself uses the polygon.
+        function geofenceContainsPoint(geofence, lat, lng) {
+            if (Array.isArray(geofence.polygon) && geofence.polygon.length >= 3) {
+                return pointInPolygon(lat, lng, geofence.polygon);
+            }
+            return distanceMeters(lat, lng, geofence.lat, geofence.lng) <= geofence.radiusMeters;
+        }
+
         // Turns a workflow's priorComplaintIds (e.g. for a recurring-offender
         // geofence) into a phrase like "issue #123" or "issues #123, #456,
         // and #789" for the {{PRIOR_COMPLAINTS}} placeholder below.
@@ -1306,7 +1364,7 @@
         function resolveWorkflow(lat, lng, when) {
             const now = when || new Date();
             const geofence = geofencesCache.find((g) =>
-                distanceMeters(lat, lng, g.lat, g.lng) <= g.radiusMeters
+                geofenceContainsPoint(g, lat, lng)
                 && geofenceActiveAt(g, now)
             );
             const workflow = { ...CONFIG.defaultWorkflow };
@@ -2356,7 +2414,8 @@
 
             if (workflow.bluCategory) item.els.bluCategory.value = workflow.bluCategory;
             if (geofence) {
-                logToConsole(`[${item.file.name}] Within ${geofence.radiusMeters}m of geofence "${geofence.name}" -- using its workflow.`);
+                const proximity = geofence.polygon ? 'Inside the polygon for' : `Within ${geofence.radiusMeters}m of`;
+                logToConsole(`[${item.file.name}] ${proximity} geofence "${geofence.name}" -- using its workflow.`);
                 // detectRepeatIncidents/reportRepeatIncidents default
                 // to true (unset on older/backfilled geofence docs).
                 if (geofence.detectRepeatIncidents !== false) {
@@ -3312,22 +3371,63 @@
         // the comment there.
         let cachedNatureValuesForForm = null;
 
-        // Geofence map picker: draggable Leaflet/OSM marker + a live radius
-        // circle, synced bidirectionally with the gfLat/gfLng/gfRadius number
-        // inputs -- same drag-to-adjust pattern as the photo GPS pin
-        // fine-tuner (see initMiniMap). The circle is a read-only
-        // visualization of gfRadius, not an independently draggable/resizable
-        // shape -- radius stays driven by the number input.
+        // Geofence map picker: draggable Leaflet/OSM marker(s), synced
+        // bidirectionally with the form inputs -- same drag-to-adjust
+        // pattern as the photo GPS pin fine-tuner (see initMiniMap).
+        // Circle shape: one draggable marker + a live radius circle (the
+        // circle is read-only geometry -- radius stays driven by the
+        // gfRadius number input, not independently resizable).
+        // Polygon shape: one draggable marker per vertex in gfPolygonPoints,
+        // connected by a live polygon outline; dragging a vertex rewrites
+        // its line in the textarea, and editing the textarea by hand
+        // rebuilds the markers/outline from scratch.
         const DETROIT_DEFAULT_CENTER = [42.331427, -83.045754];
-        let gfMap = null, gfMarker = null, gfCircle = null;
+        let gfMap = null, gfMarker = null, gfCircle = null, gfPolygon = null, gfVertexMarkers = [], gfPolygonPointsState = [];
 
-        function updateGfMapCoordsText() {
-            const pos = gfMarker.getLatLng();
-            document.getElementById('gfMapCoords').textContent = `Pin: ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} (drag to adjust)`;
+        function updateGfMapCoordsText(text) {
+            document.getElementById('gfMapCoords').textContent = text;
         }
 
-        function initGeofenceMap(lat, lng, radiusMeters) {
+        function currentGfShape() {
+            return document.getElementById('gfShapePolygon').checked ? 'polygon' : 'circle';
+        }
+
+        // Parses the gfPolygonPoints textarea (one "lat, lng" pair per
+        // line) into a {lat,lng}[] array, silently dropping blank/malformed
+        // lines so the map can redraw incrementally while someone's mid-edit.
+        function parsePolygonPointsText(text) {
+            return text.split('\n')
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map((line) => line.split(',').map((n) => parseFloat(n.trim())))
+                .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng))
+                .map(([lat, lng]) => ({ lat, lng }));
+        }
+
+        function polygonPointsToText(points) {
+            return points.map((p) => `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`).join('\n');
+        }
+
+        function initGeofenceMap(shape, lat, lng, radiusMeters, polygonPoints) {
             if (gfMap) { gfMap.remove(); gfMap = null; }
+            gfMarker = null; gfCircle = null; gfPolygon = null; gfVertexMarkers = []; gfPolygonPointsState = [];
+
+            if (shape === 'polygon') {
+                const points = Array.isArray(polygonPoints) ? polygonPoints : [];
+                const center = points.length > 0 ? [points[0].lat, points[0].lng] : DETROIT_DEFAULT_CENTER;
+                gfMap = L.map(document.getElementById('gfMapWrap')).setView(center, points.length > 0 ? 17 : 12);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; OpenStreetMap contributors',
+                    maxZoom: 19
+                }).addTo(gfMap);
+
+                if (points.length >= 3) {
+                    drawGfPolygon(points);
+                } else {
+                    updateGfMapCoordsText('Enter 3 or more points above to preview the polygon.');
+                }
+                return;
+            }
 
             const hasLatLng = Number.isFinite(lat) && Number.isFinite(lng);
             const center = hasLatLng ? [lat, lng] : DETROIT_DEFAULT_CENTER;
@@ -3350,16 +3450,51 @@
                 document.getElementById('gfLat').value = pos.lat.toFixed(6);
                 document.getElementById('gfLng').value = pos.lng.toFixed(6);
                 gfCircle.setLatLng(pos);
-                updateGfMapCoordsText();
+                updateGfMapCoordsText(`Pin: ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} (drag to adjust)`);
             });
-            updateGfMapCoordsText();
+            updateGfMapCoordsText(`Pin: ${center[0].toFixed(5)}, ${center[1].toFixed(5)} (drag to adjust)`);
+        }
+
+        // (Re)draws the polygon outline + one draggable marker per vertex.
+        // Dragging a vertex updates gfPolygonPointsState (the source of
+        // truth while dragging) and, on dragend, rewrites the whole
+        // gfPolygonPoints textarea from it -- the reverse direction is
+        // syncGfPolygonFromTextarea below, which re-parses the textarea and
+        // calls this again whenever it's edited by hand.
+        function drawGfPolygon(points) {
+            if (gfPolygon) { gfMap.removeLayer(gfPolygon); gfPolygon = null; }
+            gfVertexMarkers.forEach((m) => gfMap.removeLayer(m));
+            gfVertexMarkers = [];
+            gfPolygonPointsState = points.map((p) => ({ ...p }));
+
+            gfPolygon = L.polygon(gfPolygonPointsState.map((p) => [p.lat, p.lng]), {
+                color: '#19a696', fillColor: '#19a696', fillOpacity: 0.15, weight: 2,
+            }).addTo(gfMap);
+
+            gfVertexMarkers = gfPolygonPointsState.map((p, idx) => {
+                const marker = L.marker([p.lat, p.lng], { draggable: true }).addTo(gfMap);
+                marker.on('drag', () => {
+                    const pos = marker.getLatLng();
+                    gfPolygonPointsState[idx] = { lat: pos.lat, lng: pos.lng };
+                    gfPolygon.setLatLngs(gfPolygonPointsState.map((pp) => [pp.lat, pp.lng]));
+                });
+                marker.on('dragend', () => {
+                    document.getElementById('gfPolygonPoints').value = polygonPointsToText(gfPolygonPointsState);
+                    updateGfMapCoordsText(`${gfPolygonPointsState.length} vertices (drag a pin to adjust)`);
+                });
+                return marker;
+            });
+
+            gfMap.fitBounds(gfPolygon.getBounds(), { padding: [20, 20] });
+            updateGfMapCoordsText(`${points.length} vertices (drag a pin to adjust)`);
         }
 
         // Editing gfLat/gfLng/gfRadius by hand moves the pin/circle to match
         // -- the reverse direction of the drag handlers above. Wired once
-        // (not per form-open) directly to the number inputs.
+        // (not per form-open) directly to the number inputs. No-ops outside
+        // circle shape, where these fields are hidden.
         function syncGeofenceMapFromInputs() {
-            if (!gfMap) return;
+            if (!gfMap || currentGfShape() !== 'circle' || !gfMarker) return;
             const lat = parseFloat(document.getElementById('gfLat').value);
             const lng = parseFloat(document.getElementById('gfLng').value);
             const radiusMeters = parseFloat(document.getElementById('gfRadius').value);
@@ -3369,7 +3504,7 @@
                 gfMarker.setLatLng(pos);
                 gfCircle.setLatLng(pos);
                 gfMap.setView(pos);
-                updateGfMapCoordsText();
+                updateGfMapCoordsText(`Pin: ${lat.toFixed(5)}, ${lng.toFixed(5)} (drag to adjust)`);
             }
             if (Number.isFinite(radiusMeters) && radiusMeters > 0) {
                 gfCircle.setRadius(radiusMeters);
@@ -3378,6 +3513,40 @@
         document.getElementById('gfLat').addEventListener('input', syncGeofenceMapFromInputs);
         document.getElementById('gfLng').addEventListener('input', syncGeofenceMapFromInputs);
         document.getElementById('gfRadius').addEventListener('input', syncGeofenceMapFromInputs);
+
+        // Re-parses gfPolygonPoints and redraws whenever it's edited by
+        // hand (the reverse direction of drawGfPolygon's dragend handler
+        // above). Fewer than 3 valid points just clears the preview rather
+        // than erroring -- normal mid-typing state.
+        function syncGfPolygonFromTextarea() {
+            if (!gfMap || currentGfShape() !== 'polygon') return;
+            const points = parsePolygonPointsText(document.getElementById('gfPolygonPoints').value);
+            if (points.length >= 3) {
+                drawGfPolygon(points);
+            } else {
+                if (gfPolygon) { gfMap.removeLayer(gfPolygon); gfPolygon = null; }
+                gfVertexMarkers.forEach((m) => gfMap.removeLayer(m));
+                gfVertexMarkers = [];
+                updateGfMapCoordsText('Enter 3 or more points above to preview the polygon.');
+            }
+        }
+        document.getElementById('gfPolygonPoints').addEventListener('input', syncGfPolygonFromTextarea);
+
+        // Shape toggle: shows/hides the circle vs. polygon field groups and
+        // reinitializes the map picker for whichever shape is now selected,
+        // seeded from whatever's currently in the (now-visible) fields.
+        function updateGfShapeFields() {
+            const shape = currentGfShape();
+            document.getElementById('gfCircleFields').classList.toggle('hidden', shape !== 'circle');
+            document.getElementById('gfPolygonFields').classList.toggle('hidden', shape !== 'polygon');
+            if (shape === 'polygon') {
+                initGeofenceMap('polygon', null, null, null, parsePolygonPointsText(document.getElementById('gfPolygonPoints').value));
+            } else {
+                initGeofenceMap('circle', parseFloat(document.getElementById('gfLat').value), parseFloat(document.getElementById('gfLng').value), parseFloat(document.getElementById('gfRadius').value));
+            }
+        }
+        document.getElementById('gfShapeCircle').addEventListener('change', updateGfShapeFields);
+        document.getElementById('gfShapePolygon').addEventListener('change', updateGfShapeFields);
         document.getElementById('gfLinkSearch').addEventListener('input', renderGeofenceLinkResults);
 
         // Read-only list of historyCache entries tagged with this geofence's
@@ -3545,7 +3714,7 @@
                     <div class="flex justify-between items-start gap-2">
                         <div class="min-w-0">
                             <p class="text-sm font-bold text-detroit-dark truncate">${escapeHtml(g.name || g.id)}</p>
-                            <p class="text-[10px] text-slate-400 font-mono">${Number(g.lat).toFixed(5)}, ${Number(g.lng).toFixed(5)} &middot; ${g.radiusMeters}m</p>
+                            <p class="text-[10px] text-slate-400 font-mono">${Number(g.lat).toFixed(5)}, ${Number(g.lng).toFixed(5)} &middot; ${Array.isArray(g.polygon) && g.polygon.length >= 3 ? `${g.polygon.length}-point polygon` : `${g.radiusMeters}m`}</p>
                             <p class="text-[10px] text-slate-500">${escapeHtml(describeGeofenceSchedule(g))}</p>
                         </div>
                         <div class="flex flex-col gap-1 flex-shrink-0 items-stretch">
@@ -3604,13 +3773,24 @@
             document.getElementById('geofenceFormTitle').textContent = geofence ? `Edit Geofence: ${geofence.name}` : 'Add Geofence';
             editingGeofenceId = geofence ? geofence.id : null;
 
+            const isPolygon = !!(geofence && Array.isArray(geofence.polygon) && geofence.polygon.length >= 3);
+            document.getElementById('gfShapeCircle').checked = !isPolygon;
+            document.getElementById('gfShapePolygon').checked = isPolygon;
+            document.getElementById('gfCircleFields').classList.toggle('hidden', isPolygon);
+            document.getElementById('gfPolygonFields').classList.toggle('hidden', !isPolygon);
+
             document.getElementById('gfTitle').value = geofence ? geofence.name : '';
-            document.getElementById('gfLat').value = geofence ? geofence.lat : '';
-            document.getElementById('gfLng').value = geofence ? geofence.lng : '';
-            document.getElementById('gfRadius').value = geofence ? geofence.radiusMeters : '';
+            document.getElementById('gfLat').value = geofence && !isPolygon ? geofence.lat : '';
+            document.getElementById('gfLng').value = geofence && !isPolygon ? geofence.lng : '';
+            document.getElementById('gfRadius').value = geofence && !isPolygon ? geofence.radiusMeters : '';
+            document.getElementById('gfPolygonPoints').value = isPolygon ? polygonPointsToText(geofence.polygon) : '';
             document.getElementById('gfMessage').value = geofence ? (geofence.message || '') : '';
 
-            initGeofenceMap(geofence ? geofence.lat : null, geofence ? geofence.lng : null, geofence ? geofence.radiusMeters : null);
+            if (isPolygon) {
+                initGeofenceMap('polygon', null, null, null, geofence.polygon);
+            } else {
+                initGeofenceMap('circle', geofence ? geofence.lat : null, geofence ? geofence.lng : null, geofence ? geofence.radiusMeters : null);
+            }
             renderGeofenceIncidents(geofence ? geofence.id : null);
             document.getElementById('gfLinkSearch').value = '';
             renderGeofenceLinkResults();
@@ -3663,15 +3843,28 @@
         async function saveGeofenceForm() {
             const msg = document.getElementById('gfFormMsg');
             const name = document.getElementById('gfTitle').value.trim();
-            const lat = parseFloat(document.getElementById('gfLat').value);
-            const lng = parseFloat(document.getElementById('gfLng').value);
-            const radiusMeters = parseFloat(document.getElementById('gfRadius').value);
             const message = document.getElementById('gfMessage').value.trim();
+            const isPolygon = currentGfShape() === 'polygon';
 
-            if (!name || !Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(radiusMeters) || radiusMeters <= 0) {
-                msg.textContent = 'Title, latitude, longitude, and a positive distance are required.';
-                msg.className = 'text-center text-xs font-medium text-red-600';
-                return;
+            let lat, lng, radiusMeters, polygon = null;
+            if (isPolygon) {
+                polygon = parsePolygonPointsText(document.getElementById('gfPolygonPoints').value);
+                if (!name || polygon.length < 3) {
+                    msg.textContent = 'Title and at least 3 valid "lat, lng" points are required.';
+                    msg.className = 'text-center text-xs font-medium text-red-600';
+                    return;
+                }
+                ({ lat, lng } = polygonCentroid(polygon));
+                radiusMeters = null;
+            } else {
+                lat = parseFloat(document.getElementById('gfLat').value);
+                lng = parseFloat(document.getElementById('gfLng').value);
+                radiusMeters = parseFloat(document.getElementById('gfRadius').value);
+                if (!name || !Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(radiusMeters) || radiusMeters <= 0) {
+                    msg.textContent = 'Title, latitude, longitude, and a positive distance are required.';
+                    msg.className = 'text-center text-xs font-medium text-red-600';
+                    return;
+                }
             }
 
             const allHours = document.getElementById('gfAllHours').checked;
@@ -3685,6 +3878,7 @@
                 lat,
                 lng,
                 radiusMeters,
+                polygon,
                 message,
                 bluCategory: document.getElementById('gfBluCategory').value || null,
                 improveDetroitCategory: document.getElementById('gfNatureCategory').value || null,

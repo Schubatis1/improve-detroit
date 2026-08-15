@@ -7,11 +7,11 @@
  * the first ones in requires either using that screen by hand or running
  * this script once against a fresh Firebase project.
  *
- * Re-running this script overwrites (via merge) only the two ids below --
- * it will NOT touch or delete any geofence you've since added/edited from
- * the app. If you've already edited "gar-building" or "times-square" from
- * the app, re-running this script will stomp those edits back to the
- * defaults below -- check before re-running.
+ * Re-running this script overwrites (via merge) only the ids below -- it
+ * will NOT touch or delete any geofence you've since added/edited from the
+ * app. If you've already edited "gar-building", "times-square", or
+ * "little-caesars-arena" from the app, re-running this script will stomp
+ * those edits back to the defaults below -- check before re-running.
  *
  * Requires a Firebase service account key JSON (Firebase console ->
  * Project settings -> Service accounts -> Generate new private key).
@@ -68,6 +68,34 @@ const GEOFENCES = [
         // 24/7 -- no day/hour restriction.
         daysOfWeek: [],
         startHour: null,
+        endHour: null,
+        detectRepeatOffenders: true,
+        reportRepeatOffenders: true,
+        detectRepeatIncidents: true,
+        reportRepeatIncidents: true,
+    },
+    {
+        id: 'little-caesars-arena',
+        name: 'Little Caesars Arena',
+        // Quadrilateral (polygon), not a circle -- see index.html's
+        // geofenceContainsPoint/pointInPolygon. lat/lng below is just the
+        // polygon's centroid (used for map centering/list display); actual
+        // matching uses the `polygon` vertices, in order.
+        lat: 42.34062822,
+        lng: -83.05787565,
+        radiusMeters: null,
+        polygon: [
+            { lat: 42.3389550, lng: -83.0573937 },
+            { lat: 42.3396722, lng: -83.0569015 },
+            { lat: 42.3420456, lng: -83.0583073 },
+            { lat: 42.3418401, lng: -83.0589001 },
+        ],
+        message: '',
+        bluCategory: null,
+        improveDetroitCategory: '',
+        // Only active after 4pm, every day -- endHour null = runs to end of day.
+        daysOfWeek: [],
+        startHour: 16,
         endHour: null,
         detectRepeatOffenders: true,
         reportRepeatOffenders: true,
