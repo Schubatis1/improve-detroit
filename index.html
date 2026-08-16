@@ -895,13 +895,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.33.1';
+        const APP_VERSION = '3.33.2';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.33.2', date: '2026-08-16', notes: [
+                'Fixed report submissions failing with a 413 "FUNCTION_PAYLOAD_TOO_LARGE" error for full-resolution phone photos (5MB+) -- the same-origin Vercel proxy those requests route through caps request bodies at 4.5MB, a platform limit that can\'t be raised from config. The submitted photo (and any extra photos on a combined report) is now downscaled before upload when it\'s over that size, same as the existing Gemini/Plate Recognizer downscaling.',
+            ] },
             { version: '3.33.1', date: '2026-08-15', notes: [
                 'Fixed the CORS proxy (api/proxy.js) silently dropping the body of every multipart upload -- SeeClickFix submissions were failing with a generic 400 "could not be understood" error, and Plate Recognizer lookups with "Upload field cannot be empty," because Vercel never actually handed the proxy the raw request body for content types it doesn\'t auto-parse (that includes multipart/form-data). The proxy now reads the raw request stream itself instead of relying on Vercel\'s automatic body parsing.',
             ] },
@@ -2594,8 +2597,7 @@
 
         // Both plate-detection sources reject/choke on full-resolution phone
         // photos (8+MB at full sensor resolution) -- downscale a copy just
-        // for the recognition call. The original full-resolution file is
-        // untouched and is still what gets submitted to SeeClickFix.
+        // for the recognition call.
         async function downscaleImage(file, maxDimension = 1920, quality = 0.85) {
             const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
             const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
@@ -2623,6 +2625,29 @@
                 reader.onerror = () => reject(new Error('Could not read image for Gemini'));
                 reader.readAsDataURL(blob);
             });
+        }
+
+        // /api/proxy runs as a Vercel Node.js serverless function, which
+        // rejects any request body over 4.5MB with a platform-level 413
+        // (FUNCTION_PAYLOAD_TOO_LARGE) before our handler code ever runs --
+        // that limit can't be raised from application config. Full-res phone
+        // photos routinely land at 5-10MB, so every photo that gets POSTed
+        // through the proxy (the primary SeeClickFix submission below, and
+        // uploadTransientFile for a combined report's extra photos) needs
+        // its own downscaled copy, same as the Gemini/Plate Recognizer calls
+        // above but kept larger/higher-quality since these are the photos
+        // that end up on the public report.
+        const SEECLICKFIX_UPLOAD_SAFE_BYTES = 4 * 1024 * 1024;
+        async function ensureUploadSafeSize(file) {
+            if (file.size <= SEECLICKFIX_UPLOAD_SAFE_BYTES) return file;
+
+            logToConsole(`[${file.name}] Photo is ${Math.round(file.size / 1024)}KB -- downscaling for submission...`);
+            let upload = await downscaleImage(file, 2560, 0.9);
+            if (upload.size > SEECLICKFIX_UPLOAD_SAFE_BYTES) {
+                upload = await downscaleImage(file, 1920, 0.85);
+            }
+            logToConsole(`[${file.name}] Submission photo downscaled to ${Math.round(upload.size / 1024)}KB.`);
+            return upload;
         }
 
         // Primary model plus the quota-error fallback used by both Gemini
@@ -3057,7 +3082,7 @@
                     formData.append(`answers[${item.vehicleQuestionId}]`, vehicleAndPlate);
                 }
             }
-            formData.append('answers[issue_image]', item.file);
+            formData.append('answers[issue_image]', await ensureUploadSafeSize(item.file), item.file.name);
 
             try {
                 logToConsole(`[${item.file.name}] Dispatching POST request via CORS proxy...`);
@@ -3107,7 +3132,7 @@
                     try {
                         const locations = [];
                         for (const file of item.extraFiles.slice(0, 9)) {
-                            const uploaded = await uploadTransientFile(file);
+                            const uploaded = await uploadTransientFile(await ensureUploadSafeSize(file), file.name);
                             locations.push(uploaded.location);
                         }
                         await postIssueCommentWithPhotos(data.id, null, locations);
@@ -5122,12 +5147,12 @@
         // The captured traffic sent no auth header here at all, so none is
         // sent here either -- unverified against this app's own Bearer
         // token, but consistent with what was actually observed working.
-        async function uploadTransientFile(file) {
+        async function uploadTransientFile(file, fileName) {
             const targetUrl = 'https://seeclickfix.com/scf/v1/transient_files';
             const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
             const formData = new FormData();
             formData.append('Content-Type', file.type);
-            formData.append('file', file);
+            formData.append('file', file, fileName);
             const response = await fetch(proxyUrl, { method: 'POST', body: formData });
             if (!response.ok) {
                 const errText = await response.text();
