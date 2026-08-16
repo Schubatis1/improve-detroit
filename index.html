@@ -3106,7 +3106,7 @@
                 if (item.extraFiles && item.extraFiles.length) {
                     try {
                         const locations = [];
-                        for (const file of item.extraFiles.slice(0, 3)) {
+                        for (const file of item.extraFiles.slice(0, 9)) {
                             const uploaded = await uploadTransientFile(file);
                             locations.push(uploaded.location);
                         }
