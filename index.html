@@ -2973,7 +2973,13 @@
             submitAllBtn.disabled = true;
             const pending = queue.filter((i) => i.status === 'ready' || i.status === 'error');
             logToConsole(`Submitting ${pending.length} queued photo(s)...`);
-            for (const item of pending) {
+            const stagger = pending.length > 3;
+            for (const [index, item] of pending.entries()) {
+                if (stagger && index > 0) {
+                    logToConsole(`Waiting 1 minute before submitting report ${index + 1} of ${pending.length}...`);
+                    submitAllBtn.textContent = `Waiting to submit ${index + 1} of ${pending.length}...`;
+                    await new Promise((resolve) => setTimeout(resolve, 60000));
+                }
                 await submitItem(item);
             }
             submitAllBtn.disabled = false;
