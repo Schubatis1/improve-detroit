@@ -147,8 +147,29 @@ window.APP_CONFIG = {
         geofenceSectionIntro: 'The following incident(s) occurred at {{GEOFENCE_NAME}}:',
         miscSectionHeading: 'Miscellaneous Parking Violations',
         repeatOffendersSectionHeading: 'Repeat Offenders',
-        // Posted back to SeeClickFix by "Mark as Notified".
+        // Posted back to SeeClickFix by "Mark as Notified", for issues that
+        // were flagged because an officer/commenter actually left a comment
+        // (parkingDeptMatchMethod is 'keyword'/'phone'/'gemini'/'commenter').
         notifyCommentTemplate: 'Thank you for the update. I have notified the Municipal Parking Department about this matter.',
+        // "Auto-flag new vehicle reports" (toggle lives in Firestore --
+        // users/{uid}/settings/parkingDeptLetter, field
+        // autoFlagVehicleIssues -- edited from the Notify Parking Dept
+        // Settings screen, same as the mailing addresses; deliberately not
+        // here since it's a per-user preference). When on, every new
+        // "vehicle" (car in/blocking the bike lane) report is flagged for
+        // the next letter the moment it's submitted, instead of waiting for
+        // an officer to comment -- see addToHistory in index.html, which
+        // sets parkingDeptMatchMethod: 'proactive' on those entries.
+        //
+        // Posted back to SeeClickFix by "Mark as Notified" INSTEAD of
+        // notifyCommentTemplate above, for a 'proactive' entry that, as of
+        // the moment the notify comment is actually posted, still has no
+        // officer/city comment on it -- see commentTextForParkingDeptNotify
+        // in index.html. Deliberately doesn't open with "thank you for the
+        // update"/"follow-up", since none has happened yet: the goal is to
+        // head off the officer's own "car gone on arrival, contact the
+        // Municipal Parking Department" reply by telling them upfront.
+        notifyCommentTemplateProactive: 'I wanted to let you know in advance that I have already notified the Municipal Parking Department about this matter, in case the vehicle is gone on arrival.',
     },
 
     // Checked once a plate is OCR'd from the photo. Each rule's `plates`

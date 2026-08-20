@@ -406,6 +406,13 @@
                 <button id="parkingDeptSettingsCloseBtn" aria-label="Close" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark">&times;</button>
             </div>
             <div class="flex flex-col gap-3 pb-8">
+                <div class="bg-white border border-slate-200 rounded-lg p-3">
+                    <label class="flex items-start gap-2 text-sm text-detroit-dark">
+                        <input type="checkbox" id="pdAutoFlagVehicleIssues" class="mt-0.5">
+                        <span>Auto-flag new bike lane vehicle reports for the next letter</span>
+                    </label>
+                    <p class="text-[10px] text-slate-400 mt-1">When on, every new report of a car driving in or parked in the bike lane is added to the next letter as soon as it's submitted, instead of waiting for an officer to comment. The "Mark as Notified" comment on those issues lets the officer know in advance that you've already contacted the Municipal Parking Department, rather than thanking them for a reply that hasn't happened yet.</p>
+                </div>
                 <div>
                     <label class="text-xs font-bold text-detroit-navy uppercase">Your Name</label>
                     <input type="text" id="pdSenderName" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
@@ -895,13 +902,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.33.2';
+        const APP_VERSION = '3.34.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.34.0', date: '2026-08-20', notes: [
+                'Added an "Auto-flag new bike lane vehicle reports" toggle to Notify Parking Dept\'s Mailing Address Settings screen. When on, every new report of a car driving in or parked in the bike lane is added to the next Parking Dept letter as soon as it\'s submitted, instead of waiting for an officer to comment on it. The "Mark as Notified" comment posted for those issues no longer opens with "thank you for the update" unless an officer has actually replied by then -- it proactively lets them know the Municipal Parking Department has already been contacted instead.',
+            ] },
             { version: '3.33.2', date: '2026-08-16', notes: [
                 'Fixed report submissions failing with a 413 "FUNCTION_PAYLOAD_TOO_LARGE" error for full-resolution phone photos (5MB+) -- the same-origin Vercel proxy those requests route through caps request bodies at 4.5MB, a platform limit that can\'t be raised from config. The submitted photo (and any extra photos on a combined report) is now downscaled before upload when it\'s over that size, same as the existing Gemini/Plate Recognizer downscaling.',
             ] },
@@ -4011,6 +4021,27 @@
             const suppressed = !!opts.suppressed;
             const thumbnail = await makeThumbnail(item.file);
             const plateIds = parsePlateIds(item.els.plate.value);
+
+            // "Auto-flag new bike lane vehicle reports" (Notify Parking Dept
+            // Settings, pdAutoFlagVehicleIssues) -- when on, a real
+            // (non-suppressed) "vehicle" report (car driving in or parked in
+            // the bike lane) is flagged for the next Parking Dept letter the
+            // moment it's submitted, instead of waiting for an officer to
+            // comment. Suppressed reports never get a real SeeClickFix
+            // ticket to eventually post a notify comment on (see submitItem),
+            // so they're excluded regardless of the setting.
+            // parkingDeptMatchMethod: 'proactive' marks these apart from
+            // comment-detected matches ('keyword'/'phone'/'gemini'/
+            // 'commenter') -- see commentTextForParkingDeptNotify, which
+            // reads it to decide whether "Mark as Notified" can truthfully
+            // thank the officer for a reply or needs to proactively inform
+            // them instead.
+            let autoFlagParkingDept = false;
+            if (!suppressed && item.category === 'vehicle') {
+                const pdSettings = await loadParkingDeptSettings();
+                autoFlagParkingDept = !!pdSettings.autoFlagVehicleIssues;
+            }
+
             const entry = {
                 thumbnail,
                 address,
@@ -4040,6 +4071,11 @@
                 // leaves 'pending' (see isBluLocked/openHistoryFlyIn).
                 description: item.els.description.value.trim(),
                 bluStatus: 'pending',
+                ...(autoFlagParkingDept ? {
+                    parkingDeptFlag: 'flagged',
+                    parkingDeptFlaggedAt: new Date().toISOString(),
+                    parkingDeptMatchMethod: 'proactive',
+                } : {}),
             };
             try {
                 const uid = currentUid || await historySignedIn;
@@ -5664,6 +5700,7 @@
         async function saveParkingDeptSettings() {
             const msg = document.getElementById('pdSettingsMsg');
             const settings = {
+                autoFlagVehicleIssues: document.getElementById('pdAutoFlagVehicleIssues').checked,
                 senderName: document.getElementById('pdSenderName').value.trim(),
                 senderAddressLines: document.getElementById('pdSenderAddress').value.trim(),
                 recipientName: document.getElementById('pdRecipientName').value.trim(),
@@ -5695,6 +5732,7 @@
             document.getElementById('parkingDeptSettingsView').classList.remove('hidden');
             document.getElementById('pdSettingsMsg').textContent = '';
             const settings = await loadParkingDeptSettings();
+            document.getElementById('pdAutoFlagVehicleIssues').checked = !!settings.autoFlagVehicleIssues;
             document.getElementById('pdSenderName').value = settings.senderName || '';
             document.getElementById('pdSenderAddress').value = settings.senderAddressLines || '';
             document.getElementById('pdRecipientName').value = settings.recipientName || '';
@@ -6288,6 +6326,43 @@
         // skipped on retry. Cites the letter's stored generatedAtDisplay,
         // never a freshly-recomputed date, so it always matches what was
         // printed on the physical letter even if this runs days later.
+        // Picks the "Mark as Notified" comment wording for one entry.
+        // Entries flagged via an actual comment (keyword/phone/gemini/
+        // commenter match) always get notifyCommentTemplate -- an officer
+        // or commenter is already on record having said something, so
+        // "thank you for the update" is true. A 'proactive' entry (see
+        // addToHistory's autoFlagParkingDept) was flagged the instant it
+        // was submitted, before anyone could have replied -- but "Mark as
+        // Notified" can run days or weeks later (after the letter is
+        // generated and actually mailed), so this checks the issue's LIVE
+        // comments right before posting, not just the stored flag method:
+        // if an officer has since left a real comment, thanking them for it
+        // is accurate again and notifyCommentTemplate is used; otherwise
+        // notifyCommentTemplateProactive is used instead, which doesn't
+        // thank anyone for a reply that never came. A photo-only comment
+        // (see postIssueCommentWithPhotos, used for combined-report extra
+        // photos) has no text and doesn't count as a reply. On a fetch
+        // failure this fails toward NOT claiming a reply happened -- same
+        // fail-closed reasoning as classifyCommentWithGemini above, since
+        // an inaccurate claim in a letter/comment to a government office is
+        // worse than a missed "thank you".
+        async function commentTextForParkingDeptNotify(entry, letterDateDisplay) {
+            const P = CONFIG.parkingDeptLetter;
+            if (entry.parkingDeptMatchMethod === 'proactive') {
+                let officerHasReplied = false;
+                try {
+                    const comments = await fetchAllIssueComments(entry.issueId);
+                    officerHasReplied = comments.some((c) => c.text && c.text.trim());
+                } catch (err) {
+                    logToConsole(`Could not check issue #${entry.issueId}'s comments before notifying -- assuming no reply yet: ${err instanceof Error ? err.message : err}`, true);
+                }
+                if (!officerHasReplied) {
+                    return P.notifyCommentTemplateProactive.replace(/\{\{LETTER_DATE\}\}/g, letterDateDisplay);
+                }
+            }
+            return P.notifyCommentTemplate.replace(/\{\{LETTER_DATE\}\}/g, letterDateDisplay);
+        }
+
         async function markParkingDeptLetterNotified(letterId) {
             const letter = parkingDeptLettersCache.find((l) => l.id === letterId);
             if (!letter) return;
@@ -6300,13 +6375,13 @@
             if (!confirm(`Post a "notified on ${letter.generatedAtDisplay}" comment to ${pendingEntries.length} SeeClickFix issue(s)? This can't be undone.`)) return;
 
             const uid = currentUid || await historySignedIn;
-            const commentText = CONFIG.parkingDeptLetter.notifyCommentTemplate.replace(/\{\{LETTER_DATE\}\}/g, letter.generatedAtDisplay);
             let succeeded = 0;
             for (const entry of pendingEntries) {
                 const issueKey = String(entry.issueId);
                 let posted = parkingDeptPostedThisSession.has(issueKey);
                 if (!posted) {
                     try {
+                        const commentText = await commentTextForParkingDeptNotify(entry, letter.generatedAtDisplay);
                         await postIssueComment(entry.issueId, commentText);
                         posted = true;
                         parkingDeptPostedThisSession.add(issueKey);
