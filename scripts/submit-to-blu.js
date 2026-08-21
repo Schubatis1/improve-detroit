@@ -346,12 +346,22 @@ async function main() {
                 const ticketNote = entry.suppressed
                     ? 'Recurring/known incident -- not reported to the City of Detroit for this occurrence.'
                     : `Incident reported to the City of Detroit as #${issueId}. https://seeclickfix.com/issues/${issueId}`;
+                // BLU's own submit form has no dedicated company-name/USDOT
+                // field (confirmed by inspecting every selector fillSubmitForm
+                // uses below) -- appending it to the free-text Notes field is
+                // the guaranteed way for this data to actually reach BLU, so
+                // their advocacy work can use it regardless of whether a
+                // structured field ever gets added to the form.
+                const identityParts = [];
+                if (entry.companyName) identityParts.push(`Company: ${entry.companyName}`);
+                if (entry.usdotNumber) identityParts.push(`USDOT #${entry.usdotNumber}`);
+                const identityNote = identityParts.length ? ` ${identityParts.join(', ')}.` : '';
                 // entry.description is the (user-editable, up until this
                 // script processes it -- see index.html's history fly-in)
                 // incident description; older entries written before that
                 // field existed have none, so notes falls back to exactly
                 // what this script always sent.
-                const notes = entry.description ? `${entry.description} ${ticketNote}` : ticketNote;
+                const notes = entry.description ? `${entry.description}${identityNote} ${ticketNote}` : `${ticketNote}${identityNote}`;
                 await fillSubmitForm(page, entry, tempPhotoPath, notes);
 
                 if (args.dryRun) {

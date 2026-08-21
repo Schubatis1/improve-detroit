@@ -147,6 +147,7 @@ window.APP_CONFIG = {
         geofenceSectionIntro: 'The following incident(s) occurred at {{GEOFENCE_NAME}}:',
         miscSectionHeading: 'Miscellaneous Parking Violations',
         repeatOffendersSectionHeading: 'Repeat Offenders',
+        companyRepeatOffendersSectionHeading: 'Repeat Offenders -- Commercial Operators',
         // Posted back to SeeClickFix by "Mark as Notified", for issues that
         // were flagged because an officer/commenter actually left a comment
         // (parkingDeptMatchMethod is 'keyword'/'phone'/'gemini'/'commenter').

@@ -832,15 +832,17 @@
     </div>
     </div> <!-- #reportsTab -->
 
-    <!-- Repeat Offenders: two modes toggled by offendersMode -- every logged
+    <!-- Repeat Offenders: three modes toggled by offendersMode -- every logged
          plate grouped by how many times it's been reported (renderOffendersByPlate),
-         or every geofence grouped by how many incidents it's logged
-         (renderOffendersByGeofence). See renderOffenders() for the dispatch.
-         Purely derived from the same historyCache the Submission History
-         list uses. -->
+         every commercial operator grouped by USDOT number (company-name
+         fallback if none) (renderOffendersByCompany), or every geofence
+         grouped by how many incidents it's logged (renderOffendersByGeofence).
+         See renderOffenders() for the dispatch. Purely derived from the same
+         historyCache the Submission History list uses. -->
     <div id="offendersTab" class="hidden">
         <div class="flex gap-2 mb-4">
             <button id="offendersModePlateBtn" class="flex-1 py-1.5 rounded-lg text-xs font-semibold transition bg-detroit-teal text-white shadow">By Plate</button>
+            <button id="offendersModeCompanyBtn" class="flex-1 py-1.5 rounded-lg text-xs font-semibold transition bg-white text-detroit-navy shadow-sm">By Company/USDOT</button>
             <button id="offendersModeGeofenceBtn" class="flex-1 py-1.5 rounded-lg text-xs font-semibold transition bg-white text-detroit-navy shadow-sm">By Geofence</button>
         </div>
         <h2 class="text-xs font-bold text-detroit-navy uppercase mb-2 px-1">Repeat Offenders</h2>
@@ -1133,6 +1135,24 @@
             return firestoreDb.collection('users').doc(uid).collection('plates');
         }
 
+        // Materialized USDOT-number -> incidents index
+        // (users/{uid}/usdotNumbers/{usdotId}), mirroring platesCollection
+        // above. USDOT is the primary commercial-carrier join key (a real,
+        // unique government id when visible), so companyName is denormalized
+        // onto each doc here as a display field -- see addToHistory (write
+        // side) and initUsdotSync/usdotCache (read side).
+        function usdotNumbersCollection(uid) {
+            return firestoreDb.collection('users').doc(uid).collection('usdotNumbers');
+        }
+
+        // Materialized company-name -> incidents index
+        // (users/{uid}/companies/{companyId}) -- a fallback join key used
+        // only when a report has no legible USDOT number (see addToHistory).
+        // Mirrors platesCollection/usdotNumbersCollection.
+        function companiesCollection(uid) {
+            return firestoreDb.collection('users').doc(uid).collection('companies');
+        }
+
         // Geofences (see the Geofence Maintenance screen and
         // resolveWorkflow/geofenceActiveAt) -- fully user-managed, unlike
         // history/plates which are only ever written by the app itself.
@@ -1167,6 +1187,14 @@
         // Same, for platesCache -- see getPriorComplaintsForPlate.
         let resolvePlatesReady;
         const platesReady = new Promise((resolve) => { resolvePlatesReady = resolve; });
+
+        // Same, for usdotCache -- see getPriorComplaintsForUsdot.
+        let resolveUsdotReady;
+        const usdotReady = new Promise((resolve) => { resolveUsdotReady = resolve; });
+
+        // Same, for companiesCache -- see getPriorComplaintsForCompany.
+        let resolveCompaniesReady;
+        const companiesReady = new Promise((resolve) => { resolveCompaniesReady = resolve; });
 
         // Same, for geofencesCache -- see resolveWorkflow.
         let resolveGeofencesReady;
@@ -1447,6 +1475,67 @@
             return String(plate || '').toUpperCase().replace(/\s+/g, '');
         }
 
+        // Normalizes a detected company/business name for matching -- free
+        // text, so this only collapses trivial formatting differences
+        // (case, punctuation, extra whitespace). Deliberately does NOT
+        // strip common suffixes (LLC/INC/CORP/CO) -- that would catch more
+        // real matches but also risks merging two different companies that
+        // happen to share a base name, and USDOT (not company name) is the
+        // primary join key here (see usdotNumbersCollection), so this
+        // fallback favors precision over recall.
+        function normalizeCompanyName(name) {
+            return String(name || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+        }
+
+        // Sanitizes a normalized company name into a safe Firestore document
+        // id, mirroring plateDocId below.
+        function companyDocId(name) {
+            return normalizeCompanyName(name).replace(/\s+/g, '-');
+        }
+
+        // USDOT numbers are purely numeric placard ids -- strip everything
+        // else so formatting variants ("USDOT 123456", "US DOT#123456")
+        // all resolve to the same doc id.
+        function normalizeUsdot(usdot) {
+            return String(usdot || '').replace(/\D+/g, '');
+        }
+
+        // Sanitizes a normalized USDOT number into a safe Firestore document
+        // id. Already digits-only after normalizeUsdot, so this is a no-op
+        // today, but mirrors plateDocId/companyDocId for consistency.
+        function usdotDocId(usdot) {
+            return normalizeUsdot(usdot);
+        }
+
+        // Splits a comma-joined field (possibly merged by combineReports)
+        // into individual normalized ids, deduped -- shared by
+        // parseCompanyIds/parseUsdotIds below.
+        function dedupeByNormalizedId(rawValues, idFn) {
+            const seen = new Set();
+            const result = [];
+            for (const raw of rawValues) {
+                const trimmed = String(raw || '').trim();
+                if (!trimmed) continue;
+                const id = idFn(trimmed);
+                if (!id || seen.has(id)) continue;
+                seen.add(id);
+                result.push(trimmed);
+            }
+            return result;
+        }
+
+        // Splits a submission's raw company field into individual company
+        // doc ids, deduped. Mirrors parsePlateIds.
+        function parseCompanyIds(rawCompany) {
+            return [...new Set(String(rawCompany || '').split(',').map(companyDocId).filter(Boolean))];
+        }
+
+        // Splits a submission's raw USDOT field into individual USDOT doc
+        // ids, deduped. Mirrors parsePlateIds.
+        function parseUsdotIds(rawUsdot) {
+            return [...new Set(String(rawUsdot || '').split(',').map(usdotDocId).filter(Boolean))];
+        }
+
         // Finds the first plate rule (if any) matching a detected plate.
         function findPlateRule(plate) {
             const normalized = normalizePlate(plate);
@@ -1600,7 +1689,11 @@
         // Repeat Offenders grouping mode (by plate vs by geofence) -- see
         // renderOffenders()/renderOffendersByPlate()/renderOffendersByGeofence().
         let offendersMode = 'plate';
-        const offendersModeBtns = { plate: document.getElementById('offendersModePlateBtn'), geofence: document.getElementById('offendersModeGeofenceBtn') };
+        const offendersModeBtns = {
+            plate: document.getElementById('offendersModePlateBtn'),
+            company: document.getElementById('offendersModeCompanyBtn'),
+            geofence: document.getElementById('offendersModeGeofenceBtn'),
+        };
         function setOffendersMode(mode) {
             offendersMode = mode;
             for (const [key, btn] of Object.entries(offendersModeBtns)) {
@@ -1609,6 +1702,7 @@
             renderOffenders();
         }
         offendersModeBtns.plate.addEventListener('click', () => setOffendersMode('plate'));
+        offendersModeBtns.company.addEventListener('click', () => setOffendersMode('company'));
         offendersModeBtns.geofence.addEventListener('click', () => setOffendersMode('geofence'));
 
         // Fly-in menu (left side) and the debug console it reveals
@@ -1934,6 +2028,29 @@
         }
         let platesCache = loadPlatesFromStorage();
 
+        // usdotCache/companiesCache mirror platesCache's read-cache pattern.
+        // Each usdotCache entry is { id, usdot, companyName, incidentIds };
+        // each companiesCache entry is { id, company, incidentIds }.
+        const USDOT_STORAGE_KEY = `${CONFIG.historyKey}__usdotNumbers`;
+        function loadUsdotFromStorage() {
+            try {
+                return JSON.parse(localStorage.getItem(USDOT_STORAGE_KEY)) || [];
+            } catch {
+                return [];
+            }
+        }
+        let usdotCache = loadUsdotFromStorage();
+
+        const COMPANIES_STORAGE_KEY = `${CONFIG.historyKey}__companies`;
+        function loadCompaniesFromStorage() {
+            try {
+                return JSON.parse(localStorage.getItem(COMPANIES_STORAGE_KEY)) || [];
+            } catch {
+                return [];
+            }
+        }
+        let companiesCache = loadCompaniesFromStorage();
+
         // geofencesCache mirrors the same read-cache pattern -- see
         // initGeofencesSync/resolveWorkflow. Each entry is a Firestore doc
         // shaped like scripts/seed-geofences.js's GEOFENCES entries, plus
@@ -1993,6 +2110,8 @@
         renderHistory();
         initHistorySync();
         initPlatesSync();
+        initUsdotSync();
+        initCompaniesSync();
         initGeofencesSync();
 
         // Fetch the real picklist/question schema for a request type once per
@@ -2203,6 +2322,18 @@
                     <p class="text-[10px] text-slate-400 mt-1" data-role="plateNote">AI-detected from the photo -- please verify before submitting.</p>
                 </div>
 
+                <div data-role="companyWrap" class="hidden">
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Company / Business Name (optional)</label>
+                    <input type="text" data-role="company" placeholder="Auto-detecting..." class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                    <p class="text-[10px] text-slate-400 mt-1">AI-detected from signage/decals -- please verify before submitting.</p>
+                </div>
+
+                <div data-role="usdotWrap" class="hidden">
+                    <label class="text-xs font-bold text-detroit-navy uppercase">USDOT Number (optional)</label>
+                    <input type="text" data-role="usdot" placeholder="Auto-detecting..." class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                    <p class="text-[10px] text-slate-400 mt-1">AI-detected from the vehicle's placard -- please verify before submitting.</p>
+                </div>
+
                 <div data-role="crossStreetsWrap" class="hidden">
                     <label class="text-xs font-bold text-detroit-navy uppercase">Closest Cross Streets</label>
                     <input type="text" data-role="crossStreets" placeholder="Looking up..." class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
@@ -2256,6 +2387,10 @@
                 plateWrap: detail.querySelector('[data-role="plateWrap"]'),
                 plate: detail.querySelector('[data-role="plate"]'),
                 plateNote: detail.querySelector('[data-role="plateNote"]'),
+                companyWrap: detail.querySelector('[data-role="companyWrap"]'),
+                company: detail.querySelector('[data-role="company"]'),
+                usdotWrap: detail.querySelector('[data-role="usdotWrap"]'),
+                usdot: detail.querySelector('[data-role="usdot"]'),
                 crossStreetsWrap: detail.querySelector('[data-role="crossStreetsWrap"]'),
                 crossStreets: detail.querySelector('[data-role="crossStreets"]'),
                 bluCategory: detail.querySelector('[data-role="bluCategory"]'),
@@ -2491,12 +2626,32 @@
                 item.els.vehicle.placeholder = 'No vehicle details detected';
                 item.els.vehicleWrap.classList.remove('hidden');
             }
+
+            item.els.company.value = classification.company_name || '';
+            item.els.company.placeholder = classification.company_name ? '' : 'No company name detected';
+            item.els.companyWrap.classList.remove('hidden');
+            item.els.usdot.value = classification.usdot_number || '';
+            item.els.usdot.placeholder = classification.usdot_number ? '' : 'No USDOT number detected';
+            item.els.usdotWrap.classList.remove('hidden');
+
             if (classification.plate) {
                 logToConsole(`[${item.file.name}] Plate detected: ${item.els.plate.value} -- please verify.`);
                 applyPlateWorkflow(item, classification.plate);
-                applyRepeatOffenderNote(item, classification.plate);
             } else {
                 logToConsole(`[${item.file.name}] No plate detected in photo.`);
+            }
+            if (classification.company_name) {
+                logToConsole(`[${item.file.name}] Company detected: ${classification.company_name} -- please verify.`);
+            }
+            if (classification.usdot_number) {
+                logToConsole(`[${item.file.name}] USDOT detected: ${classification.usdot_number} -- please verify.`);
+            }
+            if (classification.plate || classification.company_name || classification.usdot_number) {
+                applyRepeatOffenderNote(item, {
+                    plate: classification.plate,
+                    companyName: classification.company_name,
+                    usdotNumber: classification.usdot_number,
+                });
             }
 
             item.els.statusBadge.textContent = 'Ready to submit';
@@ -2713,6 +2868,7 @@
         async function classifyPhotoWithGemini(item, workflow, geofence, address) {
             const fallback = {
                 category: 'vehicle', plate: null, make: null, model: null, color: null,
+                company_name: null, usdot_number: null,
                 description: null, suggest_sweep: false, blu_category: null, classificationFailed: true,
             };
             try {
@@ -2751,18 +2907,26 @@
                     + "Classify what's in the photo, then extract details. "
                     + 'Respond with ONLY a JSON object, no other text, in exactly this shape: '
                     + '{"category": "vehicle"|"other", "plate": string|null, "make": string|null, '
-                    + '"model": string|null, "color": string|null, "description": string|null, '
+                    + '"model": string|null, "color": string|null, "company_name": string|null, '
+                    + '"usdot_number": string|null, "description": string|null, '
                     + '"suggest_sweep": boolean, "blu_category": "Construction"|"Other"|null}. '
                     + 'category "vehicle": a car/truck/van is blocking or parked in the bike lane -- fill plate/make/model/color '
-                    + '(null for anything not legible/determinable). ' + vehicleDescriptionInstructions
+                    + '(null for anything not legible/determinable). company_name: any business/company name visible on the '
+                    + 'vehicle itself (door signage, decals, cab lettering) verbatim as shown, null if none legible -- if a '
+                    + "trailer or rented equipment bearing a different, unrelated company's branding is attached, prefer the "
+                    + "company name on the actual towing/powered vehicle, not the trailer's own rental-company markings. "
+                    + 'usdot_number: the numeric USDOT placard number required on commercial vehicles (e.g. "USDOT 123456" '
+                    + 'or "US DOT 123456"), digits only, null if not visible or not a commercial vehicle. '
+                    + vehicleDescriptionInstructions
                     + 'suggest_sweep false, blu_category null. '
                     + 'category "other": anything else affecting the bike lane -- broken glass, sand, gravel, a garbage/recycling '
                     + 'bin, construction materials or equipment, a pothole or sinkhole, other debris, snow, etc. Leave '
-                    + 'plate/make/model/color null. Fill description with one concise, specific sentence describing exactly '
-                    + "what's in the photo and how it affects the bike lane, suitable for a city work-order description. Set "
-                    + 'suggest_sweep true only if the issue is loose material a street sweeper could realistically clear (glass, '
-                    + 'sand, gravel, loose debris), false otherwise (e.g. a stuck bin, construction equipment, a pothole). Set '
-                    + 'blu_category to "Construction" if construction-related, otherwise "Other". '
+                    + 'plate/make/model/color/company_name/usdot_number null. Fill description with one concise, specific '
+                    + "sentence describing exactly what's in the photo and how it affects the bike lane, suitable for a city "
+                    + 'work-order description. Set suggest_sweep true only if the issue is loose material a street sweeper '
+                    + 'could realistically clear (glass, sand, gravel, loose debris), false otherwise (e.g. a stuck bin, '
+                    + 'construction equipment, a pothole). Set blu_category to "Construction" if construction-related, '
+                    + 'otherwise "Other". '
                     + 'Use null for anything you cannot determine with reasonable confidence -- do not guess.';
 
                 const data = await callGeminiWithFallback({
@@ -2884,7 +3048,11 @@
                     item.els.plate.value = prPlate;
                     item.els.plate.placeholder = '';
                     applyPlateWorkflow(item, prPlate);
-                    applyRepeatOffenderNote(item, prPlate);
+                    applyRepeatOffenderNote(item, {
+                        plate: prPlate,
+                        companyName: item.els.company.value,
+                        usdotNumber: item.els.usdot.value,
+                    });
                 }
             } else {
                 item.els.plateNote.textContent = 'No plate detected by either provider -- please verify manually.';
@@ -2919,23 +3087,29 @@
             }
         }
 
-        // If this plate already has a prior incident on file, appends a note
-        // citing the most recent one. Same stillAutoFilled guard as
-        // applyPlateWorkflow above, so it never clobbers text the user has
-        // started editing, and runs independently of config.js's plateRules
-        // (which is a separate, unrelated override mechanism). Gated by the
-        // matched geofence's detectRepeatOffenders/reportRepeatOffenders
-        // toggles, if any -- both default to true (unset on geofences with
-        // no explicit workflow, and for reports outside any geofence).
-        function applyRepeatOffenderNote(item, plate) {
+        // If this plate, USDOT number, or (absent a USDOT) company name
+        // already has a prior incident on file, appends a note citing the
+        // most recent one. Same stillAutoFilled guard as applyPlateWorkflow
+        // above, so it never clobbers text the user has started editing,
+        // and runs independently of config.js's plateRules (which is a
+        // separate, unrelated override mechanism). Gated by the matched
+        // geofence's detectRepeatOffenders/reportRepeatOffenders toggles,
+        // if any -- both default to true (unset on geofences with no
+        // explicit workflow, and for reports outside any geofence).
+        function applyRepeatOffenderNote(item, { plate, companyName, usdotNumber } = {}) {
             const geofence = item.matchedGeofence;
             if (geofence && geofence.detectRepeatOffenders === false) return;
 
-            const priorIncidents = getPriorComplaintsForPlate(plate);
-            if (priorIncidents.length === 0) return;
+            const platePriors = plate ? getPriorComplaintsForPlate(plate) : [];
+            const usdotPriors = usdotNumber ? getPriorComplaintsForUsdot(usdotNumber) : [];
+            // Company name is only a fallback join key -- skip it whenever
+            // a USDOT is present, same rule as companyIdsFromEntry, so a
+            // vehicle isn't double-counted under both.
+            const companyPriors = (!usdotNumber && companyName) ? getPriorComplaintsForCompany(companyName) : [];
+            if (platePriors.length === 0 && usdotPriors.length === 0 && companyPriors.length === 0) return;
 
             if (geofence && geofence.reportRepeatOffenders === false) {
-                logToConsole(`[${item.file.name}] Plate ${normalizePlate(plate)} has ${priorIncidents.length} prior incident(s), but "Report Repeat Offenders" is off for this geofence -- not noting it in the description.`);
+                logToConsole(`[${item.file.name}] Prior incident(s) found for this plate/company, but "Report Repeat Offenders" is off for this geofence -- not noting it in the description.`);
                 return;
             }
 
@@ -2945,13 +3119,34 @@
                 return;
             }
 
-            const latest = priorIncidents[priorIncidents.length - 1]; // oldest-first, so this is the most recent
+            // Union all matched prior incidents (a vehicle can match on
+            // both plate and company/USDOT) -- the single most recent one
+            // across all of them is what gets cited.
+            const allPriors = [...platePriors, ...usdotPriors, ...companyPriors];
+            const uniquePriors = [...new Map(allPriors.map((entry) => [entry.issueId, entry])).values()]
+                .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt)); // oldest-first
+            const latest = uniquePriors[uniquePriors.length - 1];
             const dateStr = new Date(latest.submittedAt).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
-            const updatedDescription = `${item.els.description.value} This is a repeat offender -- please see previous incident #${latest.issueId} on ${dateStr}.`;
+
+            const matchedOnPlate = platePriors.length > 0;
+            const matchedOnCompany = usdotPriors.length > 0 || companyPriors.length > 0;
+            let sentence;
+            if (matchedOnCompany) {
+                const operatorParts = [];
+                if (companyName) operatorParts.push(companyName);
+                if (usdotNumber) operatorParts.push(`USDOT #${normalizeUsdot(usdotNumber)}`);
+                const operatorLabel = operatorParts.length ? ` (${operatorParts.join(', ')})` : '';
+                sentence = matchedOnPlate
+                    ? `This is a repeat offender${operatorLabel} -- please see previous incident #${latest.issueId} on ${dateStr}.`
+                    : `This vehicle's operator${operatorLabel} is a repeat offender -- please see previous incident #${latest.issueId} on ${dateStr}.`;
+            } else {
+                sentence = `This is a repeat offender -- please see previous incident #${latest.issueId} on ${dateStr}.`;
+            }
+            const updatedDescription = `${item.els.description.value} ${sentence}`;
 
             item.autoDescriptionValue = updatedDescription;
             item.els.description.value = updatedDescription;
-            logToConsole(`[${item.file.name}] Plate ${normalizePlate(plate)} has ${priorIncidents.length} prior incident(s) -- noted #${latest.issueId} in the description.`);
+            logToConsole(`[${item.file.name}] Found ${uniquePriors.length} prior incident(s) -- noted #${latest.issueId} in the description.`);
         }
 
         function updateSubmitAllVisibility() {
@@ -3081,9 +3276,13 @@
                 const timing = item.els.timing.value.trim();
                 const plate = item.els.plate.value.trim();
                 const vehicle = item.els.vehicle.value.trim();
+                const company = item.els.company.value.trim();
+                const usdot = item.els.usdot.value.trim();
+                const usdotLabel = usdot ? `USDOT #${usdot}` : '';
                 // "make, model and license plate number" is a single free-text
-                // SeeClickFix question -- combine both editable fields into it.
-                const vehicleAndPlate = [vehicle, plate].filter(Boolean).join(', ');
+                // SeeClickFix question -- combine all editable identity
+                // fields into it, same as vehicle/plate already were.
+                const vehicleAndPlate = [vehicle, plate, company, usdotLabel].filter(Boolean).join(', ');
 
                 formData.append('request_type_id', CONFIG.seeClickFix.requestTypeId);
                 formData.append(`answers[${CONFIG.seeClickFix.natureQuestionId}]`, nature);
@@ -3185,6 +3384,13 @@
             const primary = sourceItems[0];
             const plates = sourceItems.map((item) => item.els.plate.value.trim()).filter(Boolean);
             const vehicles = sourceItems.map((item) => item.els.vehicle.value.trim()).filter(Boolean);
+            // Deduped by normalized id (case/punctuation-insensitive for
+            // company, digits-only for USDOT) so photos of the same
+            // fleet operator collapse to one entry instead of repeating
+            // N times, while genuinely different operators in one
+            // combined report are all kept, comma-joined.
+            const companies = dedupeByNormalizedId(sourceItems.map((item) => item.els.company.value.trim()), companyDocId);
+            const usdots = dedupeByNormalizedId(sourceItems.map((item) => item.els.usdot.value.trim()), usdotDocId);
 
             sourceItems.forEach((item) => {
                 if (currentFlyInItem === item) closeItemFlyIn();
@@ -3245,6 +3451,12 @@
             merged.els.vehicle.value = vehicles.join(', ');
             merged.els.vehicle.placeholder = vehicles.length === 0 ? 'No vehicle details detected' : '';
             merged.els.vehicleWrap.classList.toggle('hidden', vehicles.length === 0);
+            merged.els.company.value = companies.join(', ');
+            merged.els.company.placeholder = companies.length === 0 ? 'No company name detected' : '';
+            merged.els.companyWrap.classList.remove('hidden');
+            merged.els.usdot.value = usdots.join(', ');
+            merged.els.usdot.placeholder = usdots.length === 0 ? 'No USDOT number detected' : '';
+            merged.els.usdotWrap.classList.remove('hidden');
             merged.els.bluCategory.value = primary.els.bluCategory.value;
             // Suppress if ANY source card had it checked -- accidentally
             // suppressing a report the user wanted sent to Detroit is a far
@@ -3346,6 +3558,78 @@
                 },
                 (err) => {
                     logToConsole(`Firestore plates sync error: ${err instanceof Error ? err.message : err}`, true);
+                }
+            );
+        }
+
+        function cacheUsdotLocally() {
+            const attempt = usdotCache.slice();
+            while (true) {
+                try {
+                    localStorage.setItem(USDOT_STORAGE_KEY, JSON.stringify(attempt));
+                    return;
+                } catch (err) {
+                    if (attempt.length === 0) return;
+                    attempt.pop();
+                }
+            }
+        }
+
+        function usdotEntryFromDoc(doc) {
+            return { id: doc.id, incidentIds: [], ...doc.data() };
+        }
+
+        async function initUsdotSync() {
+            try {
+                currentUid = await historySignedIn;
+            } catch (err) {
+                return; // already logged by initHistorySync
+            }
+            usdotNumbersCollection(currentUid).onSnapshot(
+                (snapshot) => {
+                    usdotCache = snapshot.docs.map(usdotEntryFromDoc);
+                    cacheUsdotLocally();
+                    renderOffenders();
+                    resolveUsdotReady();
+                },
+                (err) => {
+                    logToConsole(`Firestore USDOT sync error: ${err instanceof Error ? err.message : err}`, true);
+                }
+            );
+        }
+
+        function cacheCompaniesLocally() {
+            const attempt = companiesCache.slice();
+            while (true) {
+                try {
+                    localStorage.setItem(COMPANIES_STORAGE_KEY, JSON.stringify(attempt));
+                    return;
+                } catch (err) {
+                    if (attempt.length === 0) return;
+                    attempt.pop();
+                }
+            }
+        }
+
+        function companyEntryFromDoc(doc) {
+            return { id: doc.id, incidentIds: [], ...doc.data() };
+        }
+
+        async function initCompaniesSync() {
+            try {
+                currentUid = await historySignedIn;
+            } catch (err) {
+                return; // already logged by initHistorySync
+            }
+            companiesCollection(currentUid).onSnapshot(
+                (snapshot) => {
+                    companiesCache = snapshot.docs.map(companyEntryFromDoc);
+                    cacheCompaniesLocally();
+                    renderOffenders();
+                    resolveCompaniesReady();
+                },
+                (err) => {
+                    logToConsole(`Firestore companies sync error: ${err instanceof Error ? err.message : err}`, true);
                 }
             );
         }
@@ -3969,6 +4253,24 @@
             return String(entry.plate || '').split(',').map(plateDocId).filter(Boolean);
         }
 
+        // A history entry's USDOT numbers -- usdotIds on entries written
+        // since this feature shipped, falling back to splitting the raw
+        // usdotNumber string for older entries. Mirrors platesFromEntry.
+        function usdotIdsFromEntry(entry) {
+            if (Array.isArray(entry.usdotIds)) return entry.usdotIds;
+            return String(entry.usdotNumber || '').split(',').map(usdotDocId).filter(Boolean);
+        }
+
+        // A history entry's company ids. USDOT is the primary join key (see
+        // usdotNumbersCollection), so this fallback is only ever non-empty
+        // when the entry has NO USDOT number at all -- an entry with both a
+        // company name and a USDOT is indexed under the USDOT alone.
+        function companyIdsFromEntry(entry) {
+            if (usdotIdsFromEntry(entry).length > 0) return [];
+            if (Array.isArray(entry.companyIds)) return entry.companyIds;
+            return String(entry.companyName || '').split(',').map(companyDocId).filter(Boolean);
+        }
+
         // Every incident id associated with a plate, from every source: the
         // materialized plates index (users/{uid}/plates, kept current going
         // forward by addToHistory) unioned with a fallback scan of
@@ -3992,6 +4294,48 @@
         // are excluded here, same reasoning as getPriorComplaintIdsForGeofence.
         function getPriorComplaintsForPlate(plate) {
             return incidentIdsForPlate(plate)
+                .map((issueId) => historyCache.find((e) => e.issueId === issueId))
+                .filter((entry) => entry && !entry.suppressed)
+                .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt)); // oldest-first
+        }
+
+        // Every incident id associated with a USDOT number, mirroring
+        // incidentIdsForPlate -- unions the materialized usdotNumbers index
+        // with a fallback scan of historyCache.
+        function incidentIdsForUsdot(usdot) {
+            const id = usdotDocId(usdot);
+            if (!id) return [];
+            const fromIndex = (usdotCache.find((u) => u.id === id) || {}).incidentIds || [];
+            const fromScan = historyCache.filter((entry) => usdotIdsFromEntry(entry).includes(id)).map((e) => e.issueId);
+            return [...new Set([...fromIndex, ...fromScan])];
+        }
+
+        // Prior submissions under the same USDOT number, mirroring
+        // getPriorComplaintsForPlate (same suppressed-exclusion reasoning:
+        // this backs Detroit-facing repeat-offender claims).
+        function getPriorComplaintsForUsdot(usdot) {
+            return incidentIdsForUsdot(usdot)
+                .map((issueId) => historyCache.find((e) => e.issueId === issueId))
+                .filter((entry) => entry && !entry.suppressed)
+                .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt)); // oldest-first
+        }
+
+        // Every incident id associated with a company name, mirroring
+        // incidentIdsForPlate/incidentIdsForUsdot. Only meaningful for
+        // entries with no USDOT captured (see companyIdsFromEntry) -- this
+        // is the fallback join key.
+        function incidentIdsForCompany(company) {
+            const id = companyDocId(company);
+            if (!id) return [];
+            const fromIndex = (companiesCache.find((c) => c.id === id) || {}).incidentIds || [];
+            const fromScan = historyCache.filter((entry) => companyIdsFromEntry(entry).includes(id)).map((e) => e.issueId);
+            return [...new Set([...fromIndex, ...fromScan])];
+        }
+
+        // Prior submissions under the same company name (fallback join
+        // key), mirroring getPriorComplaintsForPlate.
+        function getPriorComplaintsForCompany(company) {
+            return incidentIdsForCompany(company)
                 .map((issueId) => historyCache.find((e) => e.issueId === issueId))
                 .filter((entry) => entry && !entry.suppressed)
                 .sort((a, b) => new Date(a.submittedAt) - new Date(b.submittedAt)); // oldest-first
@@ -4021,6 +4365,12 @@
             const suppressed = !!opts.suppressed;
             const thumbnail = await makeThumbnail(item.file);
             const plateIds = parsePlateIds(item.els.plate.value);
+            const usdotIds = parseUsdotIds(item.els.usdot.value);
+            // USDOT is the primary commercial-carrier join key; company
+            // name only gets its own fallback index when no USDOT was
+            // captured at all -- see companyIdsFromEntry.
+            const companyIds = usdotIds.length === 0 ? parseCompanyIds(item.els.company.value) : [];
+            const companyName = item.els.company.value.trim() || null;
 
             // "Auto-flag new bike lane vehicle reports" (Notify Parking Dept
             // Settings, pdAutoFlagVehicleIssues) -- when on, a real
@@ -4064,6 +4414,10 @@
                 metroCity: item.metroCity || null,
                 plate: item.els.plate.value.trim() || null,
                 plateIds,
+                companyName,
+                companyIds,
+                usdotNumber: item.els.usdot.value.trim() || null,
+                usdotIds,
                 photoTakenAt: item.photoDateObj ? item.photoDateObj.toISOString() : null,
                 bluCategory: item.els.bluCategory.value,
                 // Sent to Bike Lane Uprising as part of its notes field (see
@@ -4099,6 +4453,17 @@
                         incidentIds: firebase.firestore.FieldValue.arrayUnion(String(issueId)),
                     }, { merge: true });
                 }
+                for (const usdotId of usdotIds) {
+                    const usdotPayload = { usdot: usdotId, incidentIds: firebase.firestore.FieldValue.arrayUnion(String(issueId)) };
+                    if (companyName) usdotPayload.companyName = companyName; // denormalized display field, best-effort
+                    batch.set(usdotNumbersCollection(uid).doc(usdotId), usdotPayload, { merge: true });
+                }
+                for (const companyId of companyIds) {
+                    batch.set(companiesCollection(uid).doc(companyId), {
+                        company: companyId,
+                        incidentIds: firebase.firestore.FieldValue.arrayUnion(String(issueId)),
+                    }, { merge: true });
+                }
                 await batch.commit();
                 // onSnapshot picks both up and calls renderHistory()/renderOffenders() itself.
             } catch (err) {
@@ -4114,6 +4479,26 @@
                     if (!plateEntry.incidentIds.includes(String(issueId))) plateEntry.incidentIds.push(String(issueId));
                 }
                 cachePlatesLocally();
+                for (const usdotId of usdotIds) {
+                    let usdotEntry = usdotCache.find((u) => u.id === usdotId);
+                    if (!usdotEntry) {
+                        usdotEntry = { id: usdotId, usdot: usdotId, companyName: companyName || null, incidentIds: [] };
+                        usdotCache.push(usdotEntry);
+                    } else if (companyName) {
+                        usdotEntry.companyName = companyName;
+                    }
+                    if (!usdotEntry.incidentIds.includes(String(issueId))) usdotEntry.incidentIds.push(String(issueId));
+                }
+                cacheUsdotLocally();
+                for (const companyId of companyIds) {
+                    let companyEntry = companiesCache.find((c) => c.id === companyId);
+                    if (!companyEntry) {
+                        companyEntry = { id: companyId, company: companyId, incidentIds: [] };
+                        companiesCache.push(companyEntry);
+                    }
+                    if (!companyEntry.incidentIds.includes(String(issueId))) companyEntry.incidentIds.push(String(issueId));
+                }
+                cacheCompaniesLocally();
                 renderHistory();
             }
         }
@@ -4327,6 +4712,16 @@
                 </div>
 
                 <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">Company / Business Name</label>
+                    <input type="text" id="hfCompany" value="${escapeHtml(entry.companyName || '')}" ${locked ? 'disabled' : ''} class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1 disabled:bg-slate-100 disabled:text-slate-400">
+                </div>
+
+                <div>
+                    <label class="text-xs font-bold text-detroit-navy uppercase">USDOT Number</label>
+                    <input type="text" id="hfUsdot" value="${escapeHtml(entry.usdotNumber || '')}" ${locked ? 'disabled' : ''} class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1 disabled:bg-slate-100 disabled:text-slate-400">
+                </div>
+
+                <div>
                     <label class="text-xs font-bold text-detroit-navy uppercase">Bike Lane Uprising Category</label>
                     <select id="hfBluCategory" ${locked ? 'disabled' : ''} class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1 disabled:bg-slate-100 disabled:text-slate-400">
                         ${bluCategoryOptionsHtml()}
@@ -4393,14 +4788,23 @@
             const address = document.getElementById('hfAddress').value.trim();
             const description = document.getElementById('hfDescription').value.trim();
             const plate = document.getElementById('hfPlate').value.trim();
+            const company = document.getElementById('hfCompany').value.trim();
+            const usdot = document.getElementById('hfUsdot').value.trim();
             const bluCategory = document.getElementById('hfBluCategory').value;
             const pos = historyFlyInMarker ? historyFlyInMarker.getLatLng() : { lat: entry.lat, lng: entry.lng };
+            const usdotIds = parseUsdotIds(usdot);
 
             const updates = {
                 address,
                 description,
                 plate: plate || null,
                 plateIds: parsePlateIds(plate),
+                companyName: company || null,
+                // USDOT stays the primary join key even on edit -- see
+                // companyIdsFromEntry.
+                companyIds: usdotIds.length === 0 ? parseCompanyIds(company) : [],
+                usdotNumber: usdot || null,
+                usdotIds,
                 bluCategory,
                 lat: pos.lat,
                 lng: pos.lng,
@@ -4428,6 +4832,7 @@
         // By Geofence toggle above).
         function renderOffenders() {
             if (offendersMode === 'geofence') renderOffendersByGeofence();
+            else if (offendersMode === 'company') renderOffendersByCompany();
             else renderOffendersByPlate();
         }
 
@@ -4462,6 +4867,75 @@
                 <div class="bg-white rounded-lg shadow-sm p-3">
                     <div class="flex justify-between items-center gap-2">
                         <p class="text-sm font-bold font-mono text-detroit-dark">${escapeHtml(plate)}</p>
+                        <p class="text-[10px] font-bold uppercase flex-shrink-0 ${entries.length > 1 ? 'text-red-600' : 'text-slate-400'}">
+                            ${entries.length} incident${entries.length === 1 ? '' : 's'}
+                        </p>
+                    </div>
+                    <div class="mt-1 flex flex-col gap-0.5">
+                        ${entries.map((entry) => {
+                            const label = entry.suppressed ? 'Suppressed' : `#${entry.issueId}`;
+                            const dateStr = new Date(entry.submittedAt).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+                            const inner = `${label} &middot; ${dateStr}${entry.address ? ` &middot; ${escapeHtml(entry.address)}` : ''}`;
+                            return entry.link
+                                ? `<a href="${entry.link}" target="_blank" rel="noopener" class="text-[10px] text-slate-500 hover:text-detroit-teal truncate">${inner}</a>`
+                                : `<span class="block text-[10px] text-slate-500 truncate">${inner}</span>`;
+                        }).join('')}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Groups historyCache by commercial operator for the Repeat
+        // Offenders tab's "By Company/USDOT" mode: every USDOT number ever
+        // reported (company-name fallback for entries with no USDOT), with
+        // how many times, sorted by frequency. Mirrors
+        // renderOffendersByPlate -- purely derived from historyCache/
+        // usdotCache, no separate query needed. Grouping prefers USDOT over
+        // company name (see companyIdsFromEntry/usdotIdsFromEntry) so a
+        // fleet operator rotating plates across vehicles still surfaces as
+        // one group, which plate-only grouping would miss.
+        function renderOffendersByCompany() {
+            const groups = new Map(); // key -> { label, entries }
+            for (const entry of historyCache) {
+                const usdotIds = usdotIdsFromEntry(entry);
+                if (usdotIds.length > 0) {
+                    for (const usdotId of usdotIds) {
+                        const key = `usdot:${usdotId}`;
+                        if (!groups.has(key)) {
+                            const cachedName = (usdotCache.find((u) => u.id === usdotId) || {}).companyName;
+                            const companyName = cachedName || entry.companyName;
+                            groups.set(key, { label: `USDOT #${usdotId}${companyName ? ` -- ${companyName}` : ''}`, entries: [] });
+                        }
+                        groups.get(key).entries.push(entry);
+                    }
+                } else {
+                    for (const companyId of companyIdsFromEntry(entry)) {
+                        const key = `company:${companyId}`;
+                        if (!groups.has(key)) {
+                            groups.set(key, { label: entry.companyName || companyId, entries: [] });
+                        }
+                        groups.get(key).entries.push(entry);
+                    }
+                }
+            }
+
+            const offenders = [...groups.values()]
+                .map(({ label, entries }) => ({
+                    label,
+                    entries: entries.slice().sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt)),
+                }))
+                .sort((a, b) => b.entries.length - a.entries.length
+                    || new Date(b.entries[0].submittedAt) - new Date(a.entries[0].submittedAt));
+
+            if (offenders.length === 0) {
+                offendersList.innerHTML = '<p class="text-xs text-slate-400 px-1">No companies/USDOT numbers logged yet.</p>';
+                return;
+            }
+
+            offendersList.innerHTML = offenders.map(({ label, entries }) => `
+                <div class="bg-white rounded-lg shadow-sm p-3">
+                    <div class="flex justify-between items-center gap-2">
+                        <p class="text-sm font-bold text-detroit-dark">${escapeHtml(label)}</p>
                         <p class="text-[10px] font-bold uppercase flex-shrink-0 ${entries.length > 1 ? 'text-red-600' : 'text-slate-400'}">
                             ${entries.length} incident${entries.length === 1 ? '' : 's'}
                         </p>
@@ -5519,7 +5993,46 @@
                 .map(([plate, issueIds]) => ({ plate, issueIds }))
                 .sort((a, b) => b.issueIds.length - a.issueIds.length);
 
-            return { geofenceGroups, misc, repeatOffenders };
+            // Commercial-operator repeat offenders: a separate section from
+            // the plate-based one above, because a fleet operator rotating
+            // the same violation across several vehicles/plates is exactly
+            // the pattern plate-only grouping misses -- merging the two
+            // sections would either duplicate an issue under both headings
+            // or force an arbitrary choice of which identity "owns" it,
+            // losing that fleet-level signal. Same >=2-lifetime-non-suppressed
+            // threshold and reasoning as the plate section above. USDOT is
+            // the primary key; company name is checked only when an entry
+            // has no USDOT, mirroring companyIdsFromEntry.
+            const usdotMap = new Map(); // usdotId -> { companyName, issueIds[] }
+            const companyOnlyMap = new Map(); // companyId -> { companyName, issueIds[] } (fallback only)
+            for (const entry of entries) {
+                const entryUsdotIds = usdotIdsFromEntry(entry);
+                for (const usdotId of entryUsdotIds) {
+                    if (getPriorComplaintsForUsdot(usdotId).length < 2) continue;
+                    if (!usdotMap.has(usdotId)) {
+                        // Prefer the materialized index's denormalized name
+                        // (kept current across every entry under this USDOT)
+                        // over this one entry's own companyName, which may
+                        // be missing/stale.
+                        const cachedName = (usdotCache.find((u) => u.id === usdotId) || {}).companyName;
+                        usdotMap.set(usdotId, { companyName: cachedName || entry.companyName || null, issueIds: [] });
+                    }
+                    if (!usdotMap.get(usdotId).issueIds.includes(entry.issueId)) usdotMap.get(usdotId).issueIds.push(entry.issueId);
+                }
+                if (entryUsdotIds.length === 0) {
+                    for (const companyId of companyIdsFromEntry(entry)) {
+                        if (getPriorComplaintsForCompany(companyId).length < 2) continue;
+                        if (!companyOnlyMap.has(companyId)) companyOnlyMap.set(companyId, { companyName: entry.companyName || null, issueIds: [] });
+                        if (!companyOnlyMap.get(companyId).issueIds.includes(entry.issueId)) companyOnlyMap.get(companyId).issueIds.push(entry.issueId);
+                    }
+                }
+            }
+            const companyRepeatOffenders = [
+                ...[...usdotMap.entries()].map(([usdot, v]) => ({ usdot, companyName: v.companyName, issueIds: v.issueIds })),
+                ...[...companyOnlyMap.entries()].map(([company, v]) => ({ usdot: null, companyName: v.companyName || company, issueIds: v.issueIds })),
+            ].sort((a, b) => b.issueIds.length - a.issueIds.length);
+
+            return { geofenceGroups, misc, repeatOffenders, companyRepeatOffenders };
         }
 
         function formatParkingDeptLetterBullet(issueId) {
@@ -5578,6 +6091,18 @@
                 children.push(new Paragraph({ text: '' }));
             }
 
+            if (model.companyRepeatOffenders.length > 0) {
+                children.push(new Paragraph({ text: P.companyRepeatOffendersSectionHeading, heading: HeadingLevel.HEADING_2 }));
+                for (const { usdot, companyName, issueIds } of model.companyRepeatOffenders) {
+                    const label = `${companyName || 'Unknown Company'}${usdot ? ` (USDOT #${usdot})` : ''}`;
+                    children.push(new Paragraph({ children: [new TextRun({ text: label, bold: true })] }));
+                    for (const issueId of issueIds) {
+                        children.push(new Paragraph({ text: formatParkingDeptLetterBullet(issueId), bullet: { level: 0 } }));
+                    }
+                }
+                children.push(new Paragraph({ text: '' }));
+            }
+
             children.push(new Paragraph({ text: P.letterClosing }));
             children.push(new Paragraph({ text: '' }));
             children.push(new Paragraph({ text: 'Sincerely,' }));
@@ -5622,6 +6147,13 @@
                 body += `<h2>${escapeHtml(P.repeatOffendersSectionHeading)}</h2>`;
                 for (const { plate, issueIds } of model.repeatOffenders) {
                     body += `<p><b>Plate ${escapeHtml(plate)}</b></p>${bulletList(issueIds)}`;
+                }
+            }
+            if (model.companyRepeatOffenders.length > 0) {
+                body += `<h2>${escapeHtml(P.companyRepeatOffendersSectionHeading)}</h2>`;
+                for (const { usdot, companyName, issueIds } of model.companyRepeatOffenders) {
+                    const label = `${companyName || 'Unknown Company'}${usdot ? ` (USDOT #${usdot})` : ''}`;
+                    body += `<p><b>${escapeHtml(label)}</b></p>${bulletList(issueIds)}`;
                 }
             }
             body += `<p>${escapeHtml(P.letterClosing)}</p><p>Sincerely,</p><p>${escapeHtml(settings.senderName || '')}</p>`;
