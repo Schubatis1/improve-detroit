@@ -2844,11 +2844,12 @@
             return upload;
         }
 
-        // Primary model plus the quota-error fallback used by both Gemini
+        // Primary model plus the quota/overload fallback used by both Gemini
         // call sites below (classifyPhotoWithGemini, classifyCommentWithGemini).
         // gemini-flash-latest's quota is shared/tighter than gemini-2.5-flash's,
-        // so on a 429 (RESOURCE_EXHAUSTED) this retries once against the older
-        // model instead of failing the whole call until the quota resets.
+        // so on a 429 (RESOURCE_EXHAUSTED) or a 503 (transient overload, after
+        // retrying the same model a few times first) this retries against the
+        // older model instead of failing the whole call outright.
         const GEMINI_MODEL = 'gemini-flash-latest';
         const GEMINI_FALLBACK_MODEL = 'gemini-2.5-flash';
 
@@ -2869,12 +2870,33 @@
                 return response.json();
             };
 
+            // 503 ("This model is currently experiencing high demand... try
+            // again later") is Google's own documented transient-overload
+            // response -- a short retry-with-backoff on the same model,
+            // same convention as fetchIssueCommentsPage's 429 handling
+            // elsewhere in this file, clears it most of the time without
+            // even needing the fallback model below.
+            const attemptWithRetry = async (model, maxAttempts) => {
+                let lastErr;
+                for (let i = 1; i <= maxAttempts; i++) {
+                    try {
+                        return await attempt(model);
+                    } catch (err) {
+                        lastErr = err;
+                        if (err.status !== 503 || i === maxAttempts) throw err;
+                        logToConsole(`${logPrefix}Gemini (${model}) overloaded (503) -- retrying in ${i * 2}s (attempt ${i + 1}/${maxAttempts})...`);
+                        await new Promise((resolve) => setTimeout(resolve, i * 2000));
+                    }
+                }
+                throw lastErr;
+            };
+
             try {
-                return await attempt(GEMINI_MODEL);
+                return await attemptWithRetry(GEMINI_MODEL, 3);
             } catch (err) {
-                if (err.status !== 429) throw err;
-                logToConsole(`${logPrefix}Gemini quota exceeded on ${GEMINI_MODEL}, retrying with ${GEMINI_FALLBACK_MODEL}...`, true);
-                return await attempt(GEMINI_FALLBACK_MODEL);
+                if (err.status !== 429 && err.status !== 503) throw err;
+                logToConsole(`${logPrefix}Gemini still unavailable on ${GEMINI_MODEL} (${err.status}), retrying with ${GEMINI_FALLBACK_MODEL}...`, true);
+                return await attemptWithRetry(GEMINI_FALLBACK_MODEL, 3);
             }
         }
 
