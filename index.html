@@ -1849,7 +1849,12 @@
             if (statsMap) { statsMap.remove(); statsMap = null; }
             if (inRange.length === 0) return;
 
-            statsMap = L.map(document.getElementById('statsMapWrap'));
+            // minZoom floors how far fitBounds (or a pinch-out) can ever
+            // zoom out -- all reports are Detroit-area, so nothing is lost,
+            // and it keeps a bad/outlier coordinate or a stale container
+            // size from ever pushing the default view out to a whole-country
+            // scale like it used to.
+            statsMap = L.map(document.getElementById('statsMapWrap'), { minZoom: 10 });
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '&copy; OpenStreetMap contributors',
                 maxZoom: 19,
@@ -1879,15 +1884,25 @@
                 return marker;
             });
 
-            if (markers.length === 1) {
-                statsMap.setView(markers[0].getLatLng(), 16);
-            } else {
-                statsMap.fitBounds(L.featureGroup(markers).getBounds().pad(0.15));
-            }
-            // Leaflet computes tile layout from the container's size at init
-            // time -- the fly-in was just unhidden this same tick, so its
-            // layout isn't settled yet without an explicit nudge.
-            setTimeout(() => statsMap && statsMap.invalidateSize(), 50);
+            // Leaflet computes tile layout -- and, via fitBounds below, the
+            // zoom needed to fit all markers -- from the container's size.
+            // The fly-in was just unhidden this same tick, so that size
+            // isn't reliably settled yet; invalidateSize() first, then fit
+            // the view against the real post-layout size, or fitBounds can
+            // massively under-zoom (e.g. to the whole country) if it reads
+            // a stale/zero size. Repeat once more shortly after as a safety
+            // net for any layout that settles a frame late.
+            const fitStatsMapView = () => {
+                if (!statsMap) return;
+                statsMap.invalidateSize();
+                if (markers.length === 1) {
+                    statsMap.setView(markers[0].getLatLng(), 16);
+                } else {
+                    statsMap.fitBounds(L.featureGroup(markers).getBounds().pad(0.15));
+                }
+            };
+            fitStatsMapView();
+            setTimeout(fitStatsMapView, 50);
         }
 
         // Opens a queue item's full editable field set (built once by
