@@ -904,13 +904,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.40.0';
+        const APP_VERSION = '3.40.1';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.40.1', date: '2026-08-21', notes: [
+                'Fixed Gemini classification silently failing on every photo -- the fallback model (gemini-2.5-flash) had been retired by Google (404, pointing to gemini-3.6-flash), so once the primary model hit its rate limit every report was falling back to a bare "vehicle blocking bike lane" classification with no plate, company name, or USDOT number detected. Now falls back to gemini-3.6-flash instead.',
+            ] },
             { version: '3.40.0', date: '2026-08-21', notes: [
                 'Repeat-offender detection now also tracks a vehicle\'s company name and USDOT number, not just its plate -- catches a fleet operator rotating the same violation across several vehicles/plates, which plate-only tracking missed. Gemini now detects both from door signage/decals and the USDOT placard (editable before submitting, like plate already was); the Repeat Offenders tab has a new "By Company/USDOT" view; and the Parking Dept letter gets a separate "Repeat Offenders -- Commercial Operators" section alongside the existing plate-based one.',
                 'Company name and USDOT number are now always included in both the Bike Lane Uprising submission (appended to the notes, since BLU\'s own form has no dedicated field for either) and the Improve Detroit vehicle description.',
@@ -2846,12 +2849,16 @@
 
         // Primary model plus the quota/overload fallback used by both Gemini
         // call sites below (classifyPhotoWithGemini, classifyCommentWithGemini).
-        // gemini-flash-latest's quota is shared/tighter than gemini-2.5-flash's,
+        // gemini-flash-latest's quota is shared/tighter than gemini-3.6-flash's,
         // so on a 429 (RESOURCE_EXHAUSTED) or a 503 (transient overload, after
         // retrying the same model a few times first) this retries against the
-        // older model instead of failing the whole call outright.
+        // other model instead of failing the whole call outright. Was
+        // gemini-2.5-flash until Google retired it for new callers (404,
+        // pointing here) -- every classification was silently falling back to
+        // the no-plate/no-company/no-USDOT default until this was caught by
+        // testing the company/USDOT combine-reports flow.
         const GEMINI_MODEL = 'gemini-flash-latest';
-        const GEMINI_FALLBACK_MODEL = 'gemini-2.5-flash';
+        const GEMINI_FALLBACK_MODEL = 'gemini-3.6-flash';
 
         async function callGeminiWithFallback(requestBody, logPrefix) {
             const attempt = async (model) => {
