@@ -37,7 +37,7 @@
          file -- bump it (matching APP_VERSION below) whenever config.js or
          this file changes, so a browser that loaded the page just before a
          deploy doesn't keep running stale config after a normal refresh. -->
-    <script src="config.js?v=3.31.0"></script>
+    <script src="config.js?v=3.40.0"></script>
     <!-- Firebase (compat build, so it works as a plain global like the rest
          of this no-build page) -- syncs submission history to Firestore. -->
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -904,13 +904,17 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.34.0';
+        const APP_VERSION = '3.40.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.40.0', date: '2026-08-21', notes: [
+                'Repeat-offender detection now also tracks a vehicle\'s company name and USDOT number, not just its plate -- catches a fleet operator rotating the same violation across several vehicles/plates, which plate-only tracking missed. Gemini now detects both from door signage/decals and the USDOT placard (editable before submitting, like plate already was); the Repeat Offenders tab has a new "By Company/USDOT" view; and the Parking Dept letter gets a separate "Repeat Offenders -- Commercial Operators" section alongside the existing plate-based one.',
+                'Company name and USDOT number are now always included in both the Bike Lane Uprising submission (appended to the notes, since BLU\'s own form has no dedicated field for either) and the Improve Detroit vehicle description.',
+            ] },
             { version: '3.34.0', date: '2026-08-20', notes: [
                 'Added an "Auto-flag new bike lane vehicle reports" toggle to Notify Parking Dept\'s Mailing Address Settings screen. When on, every new report of a car driving in or parked in the bike lane is added to the next Parking Dept letter as soon as it\'s submitted, instead of waiting for an officer to comment on it. The "Mark as Notified" comment posted for those issues no longer opens with "thank you for the update" unless an officer has actually replied by then -- it proactively lets them know the Municipal Parking Department has already been contacted instead.',
             ] },
