@@ -723,7 +723,7 @@
 </svg>
             <h1 class="text-2xl font-montserrat font-extrabold text-detroit-dark">You Can't Park There</h1>
         </div>
-        <p class="relative text-xs text-detroit-navy font-mono mb-2">v3.31.0</p>
+        <p id="appVersionLabel" class="relative text-xs text-detroit-navy font-mono mb-2">v3.31.0</p>
         <p class="relative text-sm text-slate-500 mb-6">Select one or more photos to report blocked bike lanes to Improve Detroit.</p>
 
         <!-- Hidden File Input -->
@@ -885,14 +885,14 @@
          or automatically when an error is logged -->
     <div id="debugPanel" class="hidden mt-2 bg-slate-900 rounded-lg p-4 shadow-inner flex-grow">
         <div class="flex justify-between items-center mb-2">
-            <p class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.31.0)</p>
+            <p id="debugConsoleVersionLabel" class="text-xs font-bold text-detroit-gold uppercase">Debug Console (v3.31.0)</p>
             <div class="flex gap-3">
                 <button id="debugCopyBtn" class="text-xs text-slate-500 hover:text-white">Copy All</button>
                 <button onclick="document.getElementById('debugLog').innerHTML = ''" class="text-xs text-slate-500 hover:text-white">Clear</button>
             </div>
         </div>
         <div id="debugLog" class="font-mono text-[10px] text-green-400 h-48 overflow-y-auto break-all whitespace-pre-wrap">
-            App initialized (v3.31.0)...
+            <span id="debugLogInitLine">App initialized (v3.31.0)...</span>
         </div>
     </div>
     </div> <!-- #appContent -->
@@ -2124,6 +2124,16 @@
         // breaking the entire app on load (initHistorySync/initPlatesSync/
         // initGeofencesSync right below never even get called).
         let editingGeofenceId = null;
+
+        // These were previously hand-typed "v3.31.0" literals in the HTML
+        // (title, home-screen subtitle, debug console header/init line) and
+        // silently drifted out of sync with APP_VERSION over several
+        // releases -- driving them from APP_VERSION here instead means
+        // bumping the version above is the only edit a release needs.
+        document.title = `You Can't Park There (v${APP_VERSION})`;
+        document.getElementById('appVersionLabel').textContent = `v${APP_VERSION}`;
+        document.getElementById('debugConsoleVersionLabel').textContent = `Debug Console (v${APP_VERSION})`;
+        document.getElementById('debugLogInitLine').textContent = `App initialized (v${APP_VERSION})...`;
 
         logToConsole(`Running version ${APP_VERSION}`);
         renderHistory();
