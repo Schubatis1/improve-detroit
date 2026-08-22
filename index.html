@@ -904,13 +904,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.41.0';
+        const APP_VERSION = '3.42.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.42.0', date: '2026-08-22', notes: [
+                'The final "Submit to Improve Detroit" request now retries with backoff (up to 3 attempts) on a transient failure -- a 405, 429, 502, 503, 504, or a plain network error -- instead of failing outright on the first blip. Added after a combined 3-photo report failed with a bare 405 (no content-type, unlike a real SeeClickFix error response) and never reached Improve Detroit, with no automatic recovery. Does not retry after a ticket is confirmed created, so this can\'t file a duplicate.',
+            ] },
             { version: '3.41.0', date: '2026-08-21', notes: [
                 'A report that was successfully submitted to Improve Detroit could still silently vanish from this app if the follow-up Firestore write failed -- it showed "Submitted" at the time but never appeared in History again after that session ended. The Firestore write now retries (3 attempts, with backoff) before falling back, and any error that\'s shown in the debug console is now also saved to Firestore (users/{uid}/errorLogs) so a failure like this is discoverable after the fact even if nobody was watching the console when it happened.',
             ] },
@@ -3389,24 +3392,50 @@
             formData.append('answers[issue_image]', await ensureUploadSafeSize(item.file), item.file.name);
 
             try {
-                logToConsole(`[${item.file.name}] Dispatching POST request via CORS proxy...`);
-                const targetUrl = 'https://seeclickfix.com/api/v2/issues';
-                const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
+                // Statuses worth retrying: 405/502/503/504 have shown up as
+                // one-off blips (seemingly dropped/blocked somewhere between
+                // the proxy and SeeClickFix rather than a real response from
+                // SeeClickFix's own app -- a healthy request to this endpoint
+                // returns JSON with a content-type even on auth failure, see
+                // TROUBLESHOOTING notes) and 429 is a plain rate limit. A
+                // thrown network error (no err.status) is retried too.
+                // Anything else (400/401/403/404/422, a real validation or
+                // auth error) isn't -- retrying won't fix it. Only retries
+                // before a ticket is confirmed created, so there's no risk
+                // of filing a duplicate from this loop.
+                const SCF_MAX_ATTEMPTS = 3;
+                let data;
+                for (let attempt = 1; ; attempt++) {
+                    try {
+                        logToConsole(`[${item.file.name}] Dispatching POST request via CORS proxy${attempt > 1 ? ` (attempt ${attempt}/${SCF_MAX_ATTEMPTS})` : ''}...`);
+                        const targetUrl = 'https://seeclickfix.com/api/v2/issues';
+                        const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
 
-                const response = await fetch(proxyUrl, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` },
-                    body: formData
-                });
+                        const response = await fetch(proxyUrl, {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` },
+                            body: formData
+                        });
 
-                logToConsole(`[${item.file.name}] Response: ${response.status} ${response.statusText} (content-type: ${response.headers.get('content-type')})`);
+                        logToConsole(`[${item.file.name}] Response: ${response.status} ${response.statusText} (content-type: ${response.headers.get('content-type')})`);
 
-                if (!response.ok) {
-                    const errText = await response.text();
-                    throw new Error(`SeeClickFix API Error ${response.status}: ${errText}`);
+                        if (!response.ok) {
+                            const errText = await response.text();
+                            const err = new Error(`SeeClickFix API Error ${response.status}: ${errText}`);
+                            err.status = response.status;
+                            throw err;
+                        }
+
+                        data = await response.json();
+                        break;
+                    } catch (err) {
+                        const transient = err.status === 405 || err.status === 429 || err.status === 502 || err.status === 503 || err.status === 504 || !err.status;
+                        if (!transient || attempt >= SCF_MAX_ATTEMPTS) throw err;
+                        logToConsole(`[${item.file.name}] Submission failed (${err.status || 'network error'}) -- retrying in ${attempt * 2}s (attempt ${attempt + 1}/${SCF_MAX_ATTEMPTS})...`, true);
+                        await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+                    }
                 }
 
-                const data = await response.json();
                 logToConsole(`[${item.file.name}] Success! Issue ID: ${data.id}`);
 
                 // The ticket now exists in Improve Detroit's system -- nothing
