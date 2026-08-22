@@ -904,13 +904,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.40.1';
+        const APP_VERSION = '3.41.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.41.0', date: '2026-08-21', notes: [
+                'A report that was successfully submitted to Improve Detroit could still silently vanish from this app if the follow-up Firestore write failed -- it showed "Submitted" at the time but never appeared in History again after that session ended. The Firestore write now retries (3 attempts, with backoff) before falling back, and any error that\'s shown in the debug console is now also saved to Firestore (users/{uid}/errorLogs) so a failure like this is discoverable after the fact even if nobody was watching the console when it happened.',
+            ] },
             { version: '3.40.1', date: '2026-08-21', notes: [
                 'Fixed Gemini classification silently failing on every photo -- the fallback model (gemini-2.5-flash) had been retired by Google (404, pointing to gemini-3.6-flash), so once the primary model hit its rate limit every report was falling back to a bare "vehicle blocking bike lane" classification with no plate, company name, or USDOT number detected. Now falls back to gemini-3.6-flash instead.',
             ] },
@@ -1182,6 +1185,16 @@
         // config.js -- see config.js's parkingDeptLetter comment for why.
         function settingsCollection(uid) {
             return firestoreDb.collection('users').doc(uid).collection('settings');
+        }
+
+        // Append-only error log (see logToConsole) -- lets a failure that
+        // happens when nobody's watching the in-app debug console (e.g. a
+        // silent addToHistory failure right after a real SeeClickFix
+        // submission) still be found later. Firestore-only, no
+        // localStorage mirror -- it needs to survive past the browser
+        // session that produced it.
+        function errorLogCollection(uid) {
+            return firestoreDb.collection('users').doc(uid).collection('errorLogs');
         }
 
         // Resolves once the first Firestore history snapshot has arrived, so
@@ -1588,6 +1601,24 @@
             // Errors surface the console automatically -- otherwise it stays
             // tucked away behind the fly-in menu so it doesn't clutter the UI.
             if (isError) setDebugPanelVisible(true);
+
+            // Mirror errors to Firestore (users/{uid}/errorLogs) so failures
+            // that happen when nobody's watching the debug console -- e.g. a
+            // SeeClickFix submission that succeeds but whose addToHistory
+            // write then silently fails -- are still discoverable later
+            // instead of just vanishing with the tab. Best-effort and
+            // fire-and-forget: a logging failure must never throw back into
+            // whatever code path triggered the original log, and this must
+            // never block the UI the way awaiting it would.
+            if (isError && currentUid) {
+                errorLogCollection(currentUid).add({
+                    message: formattedMessage,
+                    loggedAt: new Date().toISOString(),
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    url: location.href,
+                    appVersion: APP_VERSION,
+                }).catch(() => {});
+            }
         }
 
         const photoInput = document.getElementById('photoInput');
@@ -4425,6 +4456,28 @@
             });
         }
 
+        // Transient Firestore write failures (a network blip, a momentary
+        // auth-token refresh) shouldn't cost a report its permanent history
+        // entry -- see addToHistory's batch.commit() below, which used to
+        // fall straight through to the session-only local cache on the
+        // first error. Each retry is logged (and, via logToConsole's
+        // Firestore mirror, recorded in errorLogs) so a run that only
+        // succeeds after retrying is still visible for troubleshooting.
+        async function commitWithRetry(batch, label, attempts = 3) {
+            for (let i = 0; i < attempts; i++) {
+                try {
+                    await batch.commit();
+                    if (i > 0) logToConsole(`${label}: Firestore write succeeded on retry ${i + 1}/${attempts}.`);
+                    return;
+                } catch (err) {
+                    const isLast = i === attempts - 1;
+                    logToConsole(`${label}: Firestore write failed (attempt ${i + 1}/${attempts})${isLast ? '' : ', retrying'}: ${err instanceof Error ? err.message : err}`, true);
+                    if (isLast) throw err;
+                    await new Promise((resolve) => setTimeout(resolve, 500 * Math.pow(3, i)));
+                }
+            }
+        }
+
         async function addToHistory(item, issueId, address, opts = {}) {
             const suppressed = !!opts.suppressed;
             const thumbnail = await makeThumbnail(item.file);
@@ -4528,10 +4581,10 @@
                         incidentIds: firebase.firestore.FieldValue.arrayUnion(String(issueId)),
                     }, { merge: true });
                 }
-                await batch.commit();
+                await commitWithRetry(batch, `Submission #${issueId}`);
                 // onSnapshot picks both up and calls renderHistory()/renderOffenders() itself.
             } catch (err) {
-                logToConsole(`Could not sync submission #${issueId} to Firestore -- showing it locally for this session only: ${err instanceof Error ? err.message : err}`, true);
+                logToConsole(`Could not sync submission #${issueId} to Firestore after retrying -- showing it locally for this session only: ${err instanceof Error ? err.message : err}`, true);
                 historyCache.unshift({ issueId, ...entry });
                 cacheHistoryLocally();
                 for (const plateId of plateIds) {

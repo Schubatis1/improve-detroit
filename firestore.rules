@@ -90,6 +90,18 @@ service cloud.firestore {
         && request.auth.token.email_verified == true;
     }
 
+    // Append-only error log (see index.html's logToConsole/errorLogCollection)
+    // -- lets a failure that happens when nobody's watching the in-app debug
+    // console still be found later. Create/read only, no update/delete: it's
+    // meant as a durable audit trail, not a doc the client should ever
+    // rewrite in place. Same owner-only restriction as history/plates above.
+    match /users/{uid}/errorLogs/{logId} {
+      allow read, create: if request.auth != null
+        && request.auth.uid == uid
+        && request.auth.token.email == 'aschubatis@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
     // Runtime secrets (config/secrets: { geminiApiKey, mailStreamApiKey })
     // that shouldn't live in config.js, since that file is committed to a
     // public repo -- Google auto-revokes any service-account-bound key it
