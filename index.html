@@ -350,8 +350,13 @@
                  keyword/phone/Gemini algorithm looking for the City's
                  "car gone on arrival" referral wording; "Comments by
                  user" instead flags every issue with ANY comment from a
-                 given SeeClickFix commenter, regardless of wording --
-                 see detectParkingDeptMatch in the JS. -->
+                 given SeeClickFix commenter, regardless of wording;
+                 "Car traveling in bike lane category" flags every issue
+                 this app itself categorized as a vehicle report (the
+                 only Nature value ever submitted for those is "Car
+                 traveling in bike lane" -- see NATURE_FALLBACK_VALUES),
+                 with no comment/API check needed at all -- see
+                 detectParkingDeptMatch in the JS. -->
             <div class="bg-white border border-slate-200 rounded-lg p-3 mb-3">
                 <p class="text-xs font-bold text-detroit-navy uppercase mb-2">Detection Method</p>
                 <div class="flex flex-col gap-1 text-sm text-detroit-dark mb-2">
@@ -362,6 +367,10 @@
                     <label class="flex items-center gap-2">
                         <input type="radio" name="parkingDeptDetectionMode" id="parkingDeptModeCommenter" value="commenter">
                         Any comment by a specific commenter
+                    </label>
+                    <label class="flex items-center gap-2">
+                        <input type="radio" name="parkingDeptDetectionMode" id="parkingDeptModeCategory" value="category">
+                        Car traveling in bike lane category (no comment needed)
                     </label>
                 </div>
                 <input type="text" id="parkingDeptCommenterUsername" placeholder="Commenter username" class="hidden w-full text-sm border border-detroit-mint rounded px-2 py-1">
@@ -904,13 +913,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.42.0';
+        const APP_VERSION = '3.43.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.43.0', date: '2026-08-23', notes: [
+                'Notify Parking Dept\'s Detection Method now has a third option: "Car traveling in bike lane category." Instead of scanning an issue\'s comments for boilerplate wording or a specific commenter, this flags any issue this app itself categorized as a vehicle report -- the only Nature value ever submitted for those is "Car traveling in bike lane" -- as a candidate, with no comment/API check needed. Only covers issues submitted from now on (their history entry now records which category they were reported under); older issues have nothing to match against.',
+            ] },
             { version: '3.42.0', date: '2026-08-22', notes: [
                 'The final "Submit to Improve Detroit" request now retries with backoff (up to 3 attempts) on a transient failure -- a 405, 429, 502, 503, 504, or a plain network error -- instead of failing outright on the first blip. Added after a combined 3-photo report failed with a bare 405 (no content-type, unlike a real SeeClickFix error response) and never reached Improve Detroit, with no automatic recovery. Does not retry after a ticket is confirmed created, so this can\'t file a duplicate.',
             ] },
@@ -1804,7 +1816,7 @@
         document.getElementById('parkingDeptSearchBtn').addEventListener('click', runParkingDeptSearch);
         document.getElementById('parkingDeptCheckIssueBtn').addEventListener('click', runParkingDeptCheckById);
         document.getElementById('parkingDeptCommenterUsername').value = CONFIG.parkingDeptLetter.defaultForwardCommenterUsername || '';
-        [document.getElementById('parkingDeptModeBoilerplate'), document.getElementById('parkingDeptModeCommenter')].forEach((radio) => {
+        [document.getElementById('parkingDeptModeBoilerplate'), document.getElementById('parkingDeptModeCommenter'), document.getElementById('parkingDeptModeCategory')].forEach((radio) => {
             radio.addEventListener('change', () => {
                 document.getElementById('parkingDeptCommenterUsername').classList.toggle('hidden', !document.getElementById('parkingDeptModeCommenter').checked);
             });
@@ -4528,10 +4540,11 @@
             // so they're excluded regardless of the setting.
             // parkingDeptMatchMethod: 'proactive' marks these apart from
             // comment-detected matches ('keyword'/'phone'/'gemini'/
-            // 'commenter') -- see commentTextForParkingDeptNotify, which
-            // reads it to decide whether "Mark as Notified" can truthfully
-            // thank the officer for a reply or needs to proactively inform
-            // them instead.
+            // 'commenter') and from the separate 'category' match a Search
+            // run can make later (see issueMatchesVehicleCategory) -- see
+            // commentTextForParkingDeptNotify, which reads it to decide
+            // whether "Mark as Notified" can truthfully thank the officer
+            // for a reply or needs to proactively inform them instead.
             let autoFlagParkingDept = false;
             if (!suppressed && item.category === 'vehicle') {
                 const pdSettings = await loadParkingDeptSettings();
@@ -4566,6 +4579,14 @@
                 usdotIds,
                 photoTakenAt: item.photoDateObj ? item.photoDateObj.toISOString() : null,
                 bluCategory: item.els.bluCategory.value,
+                // 'vehicle' or 'other' -- the only Nature value ever
+                // submitted for a 'vehicle' report is "Car traveling in
+                // bike lane" (see NATURE_FALLBACK_VALUES), so this doubles
+                // as that categorization. Read back by the Notify Parking
+                // Dept screen's "Car traveling in bike lane category"
+                // detection mode (see checkAndFlagParkingDeptIssue) to
+                // flag candidates without needing any comment/API check.
+                category: item.category,
                 // Sent to Bike Lane Uprising as part of its notes field (see
                 // scripts/submit-to-blu.js) -- editable up until bluStatus
                 // leaves 'pending' (see isBluLocked/openHistoryFlyIn).
@@ -5927,6 +5948,17 @@
             return issueHasParkingDeptReferral(comments);
         }
 
+        // 'category' mode: an issue qualifies purely because this app
+        // categorized it as a vehicle report ("Car traveling in bike lane"
+        // is the only Nature value ever submitted for those -- see
+        // NATURE_FALLBACK_VALUES) -- no comments/API call needed. Only
+        // works for issues submitted after `category` started being saved
+        // on the history entry (see addToHistory); older entries have no
+        // `category` field and simply won't match.
+        function issueMatchesVehicleCategory(entry) {
+            return { matched: !!(entry && entry.category === 'vehicle'), method: 'category' };
+        }
+
         // Checks all of an issue's comments by keyword first (cheap, no API
         // call); only if NONE match does this fall back to a single Gemini
         // call for that issue (last 5 comments, newest-first, to bound
@@ -5959,7 +5991,8 @@
         // through this so Search and Check Issue always agree on which
         // method is currently selected.
         function getParkingDeptDetectionMode() {
-            const mode = document.getElementById('parkingDeptModeCommenter').checked ? 'commenter' : 'boilerplate';
+            const checkedRadio = document.querySelector('input[name="parkingDeptDetectionMode"]:checked');
+            const mode = checkedRadio ? checkedRadio.value : 'boilerplate';
             const commenterUsername = document.getElementById('parkingDeptCommenterUsername').value.trim();
             return { mode, commenterUsername };
         }
@@ -5969,9 +6002,12 @@
         // just a fresh parkingDeptLastCheckedAt so it sinks to the back of
         // the oldest-checked-first queue. Shared by the bulk Search scan
         // below and the manual "Check Issue #" lookup (runParkingDeptCheckById).
-        async function checkAndFlagParkingDeptIssue(issueId, uid, mode, commenterUsername) {
-            const comments = await fetchAllIssueComments(issueId);
-            const { matched, method } = await detectParkingDeptMatch(comments, mode, commenterUsername);
+        async function checkAndFlagParkingDeptIssue(issueId, uid, mode, commenterUsername, entry) {
+            // 'category' mode never needs to fetch comments -- the answer
+            // is already known from the locally-stored history entry.
+            const { matched, method } = mode === 'category'
+                ? issueMatchesVehicleCategory(entry)
+                : await detectParkingDeptMatch(await fetchAllIssueComments(issueId), mode, commenterUsername);
             const now = new Date().toISOString();
             if (matched) {
                 await historyCollection(uid).doc(String(issueId)).update({
@@ -6014,7 +6050,7 @@
                 const entry = candidates[i];
                 if (statusEl) statusEl.textContent = `Checking ${i + 1} of ${candidates.length} (#${entry.issueId})...`;
                 try {
-                    if (await checkAndFlagParkingDeptIssue(entry.issueId, uid, mode, commenterUsername)) flaggedCount++;
+                    if (await checkAndFlagParkingDeptIssue(entry.issueId, uid, mode, commenterUsername, entry)) flaggedCount++;
                 } catch (err) {
                     logToConsole(`[parking dept] Could not check issue #${entry.issueId}: ${err instanceof Error ? err.message : err}`, true);
                 }
@@ -6082,7 +6118,7 @@
             status.textContent = `Checking #${issueId}...`;
             try {
                 const uid = currentUid || await historySignedIn;
-                const matched = await checkAndFlagParkingDeptIssue(issueId, uid, mode, commenterUsername);
+                const matched = await checkAndFlagParkingDeptIssue(issueId, uid, mode, commenterUsername, entry);
                 status.textContent = matched
                     ? `Issue #${issueId} flagged -- referral found.`
                     : `Issue #${issueId} checked -- no referral found in its comments.`;
@@ -7009,24 +7045,24 @@
         // commenter match) always get notifyCommentTemplate -- an officer
         // or commenter is already on record having said something, so
         // "thank you for the update" is true. A 'proactive' entry (see
-        // addToHistory's autoFlagParkingDept) was flagged the instant it
-        // was submitted, before anyone could have replied -- but "Mark as
-        // Notified" can run days or weeks later (after the letter is
-        // generated and actually mailed), so this checks the issue's LIVE
-        // comments right before posting, not just the stored flag method:
-        // if an officer has since left a real comment, thanking them for it
-        // is accurate again and notifyCommentTemplate is used; otherwise
-        // notifyCommentTemplateProactive is used instead, which doesn't
-        // thank anyone for a reply that never came. A photo-only comment
-        // (see postIssueCommentWithPhotos, used for combined-report extra
-        // photos) has no text and doesn't count as a reply. On a fetch
-        // failure this fails toward NOT claiming a reply happened -- same
-        // fail-closed reasoning as classifyCommentWithGemini above, since
-        // an inaccurate claim in a letter/comment to a government office is
-        // worse than a missed "thank you".
+        // addToHistory's autoFlagParkingDept) or a 'category' entry (see
+        // issueMatchesVehicleCategory) was flagged without any comment ever
+        // being checked -- but "Mark as Notified" can run days or weeks
+        // later (after the letter is generated and actually mailed), so
+        // this checks the issue's LIVE comments right before posting, not
+        // just the stored flag method: if an officer has since left a real
+        // comment, thanking them for it is accurate again and
+        // notifyCommentTemplate is used; otherwise notifyCommentTemplateProactive
+        // is used instead, which doesn't thank anyone for a reply that never
+        // came. A photo-only comment (see postIssueCommentWithPhotos, used
+        // for combined-report extra photos) has no text and doesn't count as
+        // a reply. On a fetch failure this fails toward NOT claiming a reply
+        // happened -- same fail-closed reasoning as classifyCommentWithGemini
+        // above, since an inaccurate claim in a letter/comment to a
+        // government office is worse than a missed "thank you".
         async function commentTextForParkingDeptNotify(entry, letterDateDisplay) {
             const P = CONFIG.parkingDeptLetter;
-            if (entry.parkingDeptMatchMethod === 'proactive') {
+            if (entry.parkingDeptMatchMethod === 'proactive' || entry.parkingDeptMatchMethod === 'category') {
                 let officerHasReplied = false;
                 try {
                     const comments = await fetchAllIssueComments(entry.issueId);
