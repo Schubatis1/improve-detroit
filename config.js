@@ -170,7 +170,7 @@ window.APP_CONFIG = {
         // update"/"follow-up", since none has happened yet: the goal is to
         // head off the officer's own "car gone on arrival, contact the
         // Municipal Parking Department" reply by telling them upfront.
-        notifyCommentTemplateProactive: 'I wanted to let you know in advance that I have already notified the Municipal Parking Department about this matter, in case the vehicle is gone on arrival.',
+        notifyCommentTemplateProactive: 'I have forwarded this report to parking enforcement.',
     },
 
     // Checked once a plate is OCR'd from the photo. Each rule's `plates`

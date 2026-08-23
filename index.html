@@ -913,13 +913,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.43.0';
+        const APP_VERSION = '3.43.1';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.43.1', date: '2026-08-23', notes: [
+                'Shortened the "Mark as Notified" wording posted for proactively-flagged issues (auto-flagged or category-matched, before any officer has replied) to "I have forwarded this report to parking enforcement."',
+            ] },
             { version: '3.43.0', date: '2026-08-23', notes: [
                 'Notify Parking Dept\'s Detection Method now has a third option: "Car traveling in bike lane category." Instead of scanning an issue\'s comments for boilerplate wording or a specific commenter, this flags any issue this app itself categorized as a vehicle report -- the only Nature value ever submitted for those is "Car traveling in bike lane" -- as a candidate, with no comment/API check needed. Only covers issues submitted from now on (their history entry now records which category they were reported under); older issues have nothing to match against.',
             ] },
