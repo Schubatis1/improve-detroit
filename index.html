@@ -352,11 +352,13 @@
                  user" instead flags every issue with ANY comment from a
                  given SeeClickFix commenter, regardless of wording;
                  "Car traveling in bike lane category" flags every issue
-                 this app itself categorized as a vehicle report (the
-                 only Nature value ever submitted for those is "Car
-                 traveling in bike lane" -- see NATURE_FALLBACK_VALUES),
-                 with no comment/API check needed at all -- see
-                 detectParkingDeptMatch in the JS. -->
+                 filed as a vehicle report (the only Nature value ever
+                 submitted for those is "Car traveling in bike lane" --
+                 see NATURE_FALLBACK_VALUES): no comment scan needed,
+                 just the report's own cached category, or (for an issue
+                 that predates that being cached) a direct lookup of the
+                 request type it was actually filed under -- see
+                 issueMatchesVehicleCategory in the JS. -->
             <div class="bg-white border border-slate-200 rounded-lg p-3 mb-3">
                 <p class="text-xs font-bold text-detroit-navy uppercase mb-2">Detection Method</p>
                 <div class="flex flex-col gap-1 text-sm text-detroit-dark mb-2">
@@ -913,13 +915,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.43.1';
+        const APP_VERSION = '3.43.2';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.43.2', date: '2026-08-23', notes: [
+                'Fixed "Car traveling in bike lane category" (Notify Parking Dept) missing issues reported before that detection mode shipped -- those history entries have no cached category to check. It now falls back to asking SeeClickFix directly what request type the issue was actually filed under, so older issues are covered too, not just ones reported from now on.',
+            ] },
             { version: '3.43.1', date: '2026-08-23', notes: [
                 'Shortened the "Mark as Notified" wording posted for proactively-flagged issues (auto-flagged or category-matched, before any officer has replied) to "I have forwarded this report to parking enforcement."',
             ] },
@@ -5951,15 +5956,37 @@
             return issueHasParkingDeptReferral(comments);
         }
 
-        // 'category' mode: an issue qualifies purely because this app
-        // categorized it as a vehicle report ("Car traveling in bike lane"
-        // is the only Nature value ever submitted for those -- see
-        // NATURE_FALLBACK_VALUES) -- no comments/API call needed. Only
-        // works for issues submitted after `category` started being saved
-        // on the history entry (see addToHistory); older entries have no
-        // `category` field and simply won't match.
-        function issueMatchesVehicleCategory(entry) {
-            return { matched: !!(entry && entry.category === 'vehicle'), method: 'category' };
+        // 'category' mode: an issue qualifies because it was filed as a
+        // vehicle report ("Car traveling in bike lane" is the only Nature
+        // value ever submitted for those -- see NATURE_FALLBACK_VALUES).
+        // Fast path: if the history entry already has `category` cached
+        // (saved on every report since that field was added -- see
+        // addToHistory), use it directly, no API call needed. Fallback: an
+        // entry submitted before that field existed has no `category`
+        // saved, so ask SeeClickFix directly what request type the issue
+        // itself was actually filed under (confirmed reliable -- GET
+        // /issues/{id} always includes request_type.id, unlike custom
+        // question answers like Nature, which the API never exposes back --
+        // see fetchIssueRequestTypeId).
+        async function issueMatchesVehicleCategory(entry, issueId) {
+            if (entry && entry.category) {
+                return { matched: entry.category === 'vehicle', method: 'category' };
+            }
+            const requestTypeId = await fetchIssueRequestTypeId(issueId);
+            return { matched: requestTypeId === CONFIG.seeClickFix.requestTypeId, method: 'category' };
+        }
+
+        // Used only by issueMatchesVehicleCategory's fallback path, for
+        // history entries that predate `category` being cached locally.
+        async function fetchIssueRequestTypeId(issueId) {
+            const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}`;
+            const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
+            const response = await fetch(proxyUrl, {
+                headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` }
+            });
+            if (!response.ok) throw new Error(`Issue lookup failed: ${response.status}`);
+            const data = await response.json();
+            return data.request_type ? String(data.request_type.id) : null;
         }
 
         // Checks all of an issue's comments by keyword first (cheap, no API
@@ -6006,10 +6033,11 @@
         // the oldest-checked-first queue. Shared by the bulk Search scan
         // below and the manual "Check Issue #" lookup (runParkingDeptCheckById).
         async function checkAndFlagParkingDeptIssue(issueId, uid, mode, commenterUsername, entry) {
-            // 'category' mode never needs to fetch comments -- the answer
-            // is already known from the locally-stored history entry.
+            // 'category' mode never needs to fetch comments -- it checks
+            // the locally-stored history entry, or (for an entry that
+            // predates that field) the issue's own request type instead.
             const { matched, method } = mode === 'category'
-                ? issueMatchesVehicleCategory(entry)
+                ? await issueMatchesVehicleCategory(entry, issueId)
                 : await detectParkingDeptMatch(await fetchAllIssueComments(issueId), mode, commenterUsername);
             const now = new Date().toISOString();
             if (matched) {
