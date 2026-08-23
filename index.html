@@ -915,13 +915,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.43.2';
+        const APP_VERSION = '3.43.3';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.43.3', date: '2026-08-23', notes: [
+                'Fixed a large "Mark as Notified" run (20+ issues) tripping SeeClickFix\'s rate limit partway through and failing outright on the affected issues, with no retry. Comment posting now retries 429s/network failures with backoff, same as the existing comment-fetch retry logic, and each issue is now paced 300ms apart instead of firing back-to-back. The new "Car traveling in bike lane category" detection mode\'s SeeClickFix lookup (added last release, for issues reported before that mode shipped) got the same retry treatment -- it could hit the same rate limit during a big Search run.',
+            ] },
             { version: '3.43.2', date: '2026-08-23', notes: [
                 'Fixed "Car traveling in bike lane category" (Notify Parking Dept) missing issues reported before that detection mode shipped -- those history entries have no cached category to check. It now falls back to asking SeeClickFix directly what request type the issue was actually filed under, so older issues are covered too, not just ones reported from now on.',
             ] },
@@ -5806,17 +5809,39 @@
             }
         }
 
+        // "Mark as Notified" can post a comment to 20+ issues back-to-back
+        // with no pacing (see markParkingDeptLetterNotified) -- easily trips
+        // SeeClickFix's rate limit. Retry 429/network failures with backoff,
+        // same pattern as fetchIssueCommentsPage; a real rejection (e.g. 422
+        // "Comments are closed for the archived issue") is permanent, not
+        // transient, so it still fails immediately without wasting retries.
         async function postIssueComment(issueId, commentText) {
             const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}/comments`;
             const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
-            const response = await fetch(proxyUrl, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${CONFIG.seeClickFix.token}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ comment: commentText }),
-            });
+            const maxAttempts = 4;
+            let response;
+            let lastErr;
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                    response = await fetch(proxyUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${CONFIG.seeClickFix.token}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ comment: commentText }),
+                    });
+                    lastErr = null;
+                } catch (err) {
+                    lastErr = err;
+                    response = null;
+                }
+                const shouldRetry = (response && response.status === 429) || (!response && lastErr);
+                if (!shouldRetry || attempt === maxAttempts) break;
+                logToConsole(`[notify] Issue #${issueId}: proxy ${response ? `rate-limited (429)` : `request failed (${lastErr instanceof Error ? lastErr.message : lastErr})`} -- retrying in ${attempt * 2}s (attempt ${attempt + 1}/${maxAttempts})...`);
+                await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+            }
+            if (!response) throw lastErr;
             if (!response.ok) {
                 const errText = await response.text();
                 throw new Error(`Comment post failed (${response.status}): ${errText}`);
@@ -5977,13 +6002,32 @@
         }
 
         // Used only by issueMatchesVehicleCategory's fallback path, for
-        // history entries that predate `category` being cached locally.
+        // history entries that predate `category` being cached locally. A
+        // Search run can call this back-to-back for many issues (see
+        // searchParkingDeptCandidates), same as fetchIssueCommentsPage --
+        // retry 429/network failures with backoff for the same reason.
         async function fetchIssueRequestTypeId(issueId) {
             const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}`;
             const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
-            const response = await fetch(proxyUrl, {
-                headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` }
-            });
+            const maxAttempts = 4;
+            let response;
+            let lastErr;
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                    response = await fetch(proxyUrl, {
+                        headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` }
+                    });
+                    lastErr = null;
+                } catch (err) {
+                    lastErr = err;
+                    response = null;
+                }
+                const shouldRetry = (response && response.status === 429) || (!response && lastErr);
+                if (!shouldRetry || attempt === maxAttempts) break;
+                logToConsole(`[category] Issue #${issueId}: proxy ${response ? `rate-limited (429)` : `request failed (${lastErr instanceof Error ? lastErr.message : lastErr})`} -- retrying in ${attempt * 2}s (attempt ${attempt + 1}/${maxAttempts})...`);
+                await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+            }
+            if (!response) throw lastErr;
             if (!response.ok) throw new Error(`Issue lookup failed: ${response.status}`);
             const data = await response.json();
             return data.request_type ? String(data.request_type.id) : null;
@@ -7121,7 +7165,8 @@
 
             const uid = currentUid || await historySignedIn;
             let succeeded = 0;
-            for (const entry of pendingEntries) {
+            for (let i = 0; i < pendingEntries.length; i++) {
+                const entry = pendingEntries[i];
                 const issueKey = String(entry.issueId);
                 let posted = parkingDeptPostedThisSession.has(issueKey);
                 if (!posted) {
@@ -7151,6 +7196,13 @@
                 } catch (err) {
                     logToConsole(`Posted the comment for issue #${entry.issueId}, but could not record it in Firestore -- it will keep showing as pending until this succeeds. Retrying "Mark as Notified" will NOT post a duplicate comment: ${err instanceof Error ? err.message : err}`, true);
                 }
+                // Each entry can fire two SeeClickFix requests back-to-back
+                // (commentTextForParkingDeptNotify's comments check, then the
+                // post itself) with no pacing otherwise -- a run of 20+
+                // issues was tripping the rate limit well before
+                // postIssueComment's own retry logic even kicked in. Same
+                // pacing as searchParkingDeptCandidates.
+                if (i < pendingEntries.length - 1) await new Promise((resolve) => setTimeout(resolve, 300));
             }
 
             const stillPending = pendingEntries.length - succeeded;
