@@ -3402,8 +3402,21 @@
                 const usdotLabel = usdot ? `USDOT #${usdot}` : '';
                 // "make, model and license plate number" is a single free-text
                 // SeeClickFix question -- combine all editable identity
-                // fields into it, same as vehicle/plate already were.
-                const vehicleAndPlate = [vehicle, plate, company, usdotLabel].filter(Boolean).join(', ');
+                // fields into it, same as vehicle/plate already were. For a
+                // combined report (see combineReports), vehicle/plate are each
+                // their own comma-joined list in source-item order -- pair them
+                // up index-by-index (e.g. "model1 plate1, model2 plate2")
+                // instead of appending one full list after the other, so each
+                // plate stays next to the vehicle it actually belongs to.
+                const vehicleList = vehicle ? vehicle.split(',').map((s) => s.trim()).filter(Boolean) : [];
+                const plateList = plate ? plate.split(',').map((s) => s.trim()).filter(Boolean) : [];
+                const pairCount = Math.max(vehicleList.length, plateList.length);
+                const vehiclePlatePairs = [];
+                for (let i = 0; i < pairCount; i++) {
+                    const pair = [vehicleList[i], plateList[i]].filter(Boolean).join(' ');
+                    if (pair) vehiclePlatePairs.push(pair);
+                }
+                const vehicleAndPlate = [vehiclePlatePairs.join(', '), company, usdotLabel].filter(Boolean).join(', ');
 
                 formData.append('request_type_id', CONFIG.seeClickFix.requestTypeId);
                 formData.append(`answers[${CONFIG.seeClickFix.natureQuestionId}]`, nature);
