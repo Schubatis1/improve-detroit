@@ -964,13 +964,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.44.2';
+        const APP_VERSION = '3.44.3';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.44.3', date: '2026-08-26', notes: [
+                'Permit Lookup cards now show the full work description text instead of truncating it at 500/300 characters -- long ones (some right-of-way permits run several paragraphs of conditions) now scroll within the card instead of getting cut off with "…".',
+            ] },
             { version: '3.44.2', date: '2026-08-26', notes: [
                 'Fixed Permit Lookup silently missing real, in-range permits (e.g. ENG-23-557, a currently-active right-of-way permit near UM Center for Innovation) in busy corridors. The City\'s FeatureServer runs in a "basic tiles" query mode that doesn\'t reliably sort before truncating results, so requesting only the top 15 could return an arbitrary 15 out of 40+ nearby permit segments instead of the actual newest ones. It now fetches everything within the search radius and sorts/dedupes client-side -- deduping also collapses the 2-3 duplicate rows a single right-of-way permit produces (one per street segment it touches) down to one card.',
             ] },
@@ -2032,7 +2035,7 @@
             const impactFlags = ['sidewalk', 'roadway', 'berm', 'alley']
                 .filter((k) => a[`is_${k}`])
                 .map((k) => k[0].toUpperCase() + k.slice(1));
-            const description = (a.work_description || '').slice(0, 500);
+            const description = a.work_description || '';
             const active = isRowPermitActiveToday(feature);
             return `
                 <div class="bg-white border border-detroit-mint rounded-lg p-3">
@@ -2043,20 +2046,20 @@
                     <p class="text-[10px] text-slate-400 font-mono">${escapeHtml(a.application_id || '')}${a.job_number ? ` &middot; Job ${escapeHtml(a.job_number)}` : ''}</p>
                     <p class="text-xs text-slate-500 mt-1">${arcgisDateToText(a.start_date)} &ndash; ${arcgisDateToText(a.end_date)} (issued ${arcgisDateToText(a.permit_issued_date)})</p>
                     ${impactFlags.length ? `<p class="text-xs mt-1"><span class="inline-block bg-detroit-gold/30 text-detroit-dark rounded px-2 py-0.5 font-semibold">${impactFlags.join(' / ')} impacted</span></p>` : ''}
-                    ${description ? `<p class="text-xs text-slate-600 mt-2 whitespace-pre-line">${escapeHtml(description)}${(a.work_description || '').length > 500 ? '…' : ''}</p>` : ''}
+                    ${description ? `<div class="text-xs text-slate-600 mt-2 whitespace-pre-line max-h-64 overflow-y-auto border-t border-detroit-mint/50 pt-2">${escapeHtml(description)}</div>` : ''}
                 </div>
             `;
         }
 
         function renderBuildingPermitCard(feature) {
             const a = feature.attributes;
-            const description = (a.work_description || '').slice(0, 300);
+            const description = a.work_description || '';
             return `
                 <div class="bg-white border border-detroit-mint rounded-lg p-3">
                     <p class="text-sm font-semibold text-detroit-dark">${escapeHtml(a.permit_type || 'Building Permit')}</p>
                     <p class="text-[10px] text-slate-400 font-mono">${escapeHtml(a.record_id || '')}${a.address ? ` &middot; ${escapeHtml(a.address)}` : ''}</p>
                     <p class="text-xs text-slate-500 mt-1">Issued ${arcgisDateToText(a.issued_date)} (submitted ${arcgisDateToText(a.submitted_date)})</p>
-                    ${description ? `<p class="text-xs text-slate-600 mt-2 whitespace-pre-line">${escapeHtml(description)}${(a.work_description || '').length > 300 ? '…' : ''}</p>` : ''}
+                    ${description ? `<div class="text-xs text-slate-600 mt-2 whitespace-pre-line max-h-64 overflow-y-auto border-t border-detroit-mint/50 pt-2">${escapeHtml(description)}</div>` : ''}
                 </div>
             `;
         }
