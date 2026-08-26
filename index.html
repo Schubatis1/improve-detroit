@@ -528,7 +528,7 @@
             <h2 class="text-lg font-montserrat font-extrabold text-detroit-dark">Permit Lookup</h2>
             <button id="permitLookupCloseBtn" aria-label="Close" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark">&times;</button>
         </div>
-        <p class="text-xs text-slate-500 mb-3">Searches the City of Detroit's public open-data portal for nearby Right-of-Way permits (sidewalk/bike lane/roadway closures) and BSEED building permits. Informational only -- always verify with DPW that a permit found here actually covers what you're looking at.</p>
+        <p class="text-xs text-slate-500 mb-3">Searches the City of Detroit's public open-data portal for nearby Right-of-Way permits (sidewalk/bike lane/roadway closures) and BSEED building permits. Informational only -- each Right-of-Way result links to the City's official <a href="https://detroitmi.portal.opengov.com/search" target="_blank" rel="noopener" class="text-detroit-teal underline">Right of Way Management</a> portal so you can verify the live record (that system has no public API, so this can't pull its data in directly -- open-data can lag a day or more behind it).</p>
 
         <label for="permitLookupGeofence" class="text-xs font-semibold text-detroit-navy mb-1">Saved geofence</label>
         <select id="permitLookupGeofence" class="w-full text-sm border border-detroit-mint rounded px-2 py-2 mb-3">
@@ -964,13 +964,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.44.3';
+        const APP_VERSION = '3.44.4';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.44.4', date: '2026-08-26', notes: [
+                'Each Right-of-Way permit result in Permit Lookup now links to the City of Detroit\'s official Right of Way Management portal (detroitmi.portal.opengov.com) to verify the live record -- that system turned out to have no public API (its search backend returned an auth error when queried directly), so this can\'t pull its data in the way the open-data feeds are queried; the link is a fast way to cross-check the permit found here (which can lag the live system by a day or more) against the source of truth.',
+            ] },
             { version: '3.44.3', date: '2026-08-26', notes: [
                 'Permit Lookup cards now show the full work description text instead of truncating it at 500/300 characters -- long ones (some right-of-way permits run several paragraphs of conditions) now scroll within the card instead of getting cut off with "…".',
             ] },
@@ -1926,6 +1929,21 @@
         const ROW_PERMITS_QUERY_URL = 'https://services2.arcgis.com/qvkbeam7Wirps6zC/arcgis/rest/services/detroit_right_of_way_permits/FeatureServer/5/query';
         const BUILDING_PERMITS_QUERY_URL = 'https://services2.arcgis.com/qvkbeam7Wirps6zC/arcgis/rest/services/bseed_building_permits/FeatureServer/0/query';
 
+        // City of Detroit's official Right of Way Management system --
+        // where these permits are actually issued and where the live,
+        // authoritative record (status, conditions, attachments) lives.
+        // It's a private OpenGov "Permitting & Licensing" instance (an
+        // Ember/GraphQL app behind Auth0) with no public API -- confirmed
+        // directly: its search backend (search.viewpointcloud.com/graphql)
+        // returns 403 "Missing Authorization HTTP header" with no
+        // credentials, so unlike the ArcGIS open-data feeds above, this
+        // can't be queried in-app. Its public citizen search (the "Search"
+        // link, no login needed) only takes an address/location chosen
+        // from its own autocomplete, not a URL query-string permit number,
+        // so the deep link below just opens that search page -- the
+        // application_id shown on each card is what to type into it.
+        const ROW_MANAGEMENT_PORTAL_URL = 'https://detroitmi.portal.opengov.com/search';
+
         // Buffer-around-a-point query against an Esri FeatureServer/query
         // endpoint -- geometryType esriGeometryPoint + distance/units turns
         // the point into a circular search area server-side.
@@ -2047,6 +2065,7 @@
                     <p class="text-xs text-slate-500 mt-1">${arcgisDateToText(a.start_date)} &ndash; ${arcgisDateToText(a.end_date)} (issued ${arcgisDateToText(a.permit_issued_date)})</p>
                     ${impactFlags.length ? `<p class="text-xs mt-1"><span class="inline-block bg-detroit-gold/30 text-detroit-dark rounded px-2 py-0.5 font-semibold">${impactFlags.join(' / ')} impacted</span></p>` : ''}
                     ${description ? `<div class="text-xs text-slate-600 mt-2 whitespace-pre-line max-h-64 overflow-y-auto border-t border-detroit-mint/50 pt-2">${escapeHtml(description)}</div>` : ''}
+                    ${a.application_id ? `<a href="${ROW_MANAGEMENT_PORTAL_URL}" target="_blank" rel="noopener" class="inline-block text-xs text-detroit-teal underline mt-2">Verify on City of Detroit Right of Way Management &#8599; (search "${escapeHtml(a.application_id)}")</a>` : ''}
                 </div>
             `;
         }
