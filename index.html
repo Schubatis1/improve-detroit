@@ -964,13 +964,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.44.1';
+        const APP_VERSION = '3.44.2';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.44.2', date: '2026-08-26', notes: [
+                'Fixed Permit Lookup silently missing real, in-range permits (e.g. ENG-23-557, a currently-active right-of-way permit near UM Center for Innovation) in busy corridors. The City\'s FeatureServer runs in a "basic tiles" query mode that doesn\'t reliably sort before truncating results, so requesting only the top 15 could return an arbitrary 15 out of 40+ nearby permit segments instead of the actual newest ones. It now fetches everything within the search radius and sorts/dedupes client-side -- deduping also collapses the 2-3 duplicate rows a single right-of-way permit produces (one per street segment it touches) down to one card.',
+            ] },
             { version: '3.44.1', date: '2026-08-26', notes: [
                 'Permit Lookup results are now explicitly sorted newest-to-oldest (most recent start/issued date first, with a fallback if that field is blank), and there\'s a new "Only show right-of-way permits active today" filter that checks each permit\'s start/end date against today -- toggling it re-filters the last search instantly instead of re-querying. Right-of-way permit cards now also show an Active/Not active badge. The active-only filter only applies to right-of-way permits, since BSEED building permits have no comparable start/end window in this data.',
             ] },
@@ -1923,7 +1926,24 @@
         // Buffer-around-a-point query against an Esri FeatureServer/query
         // endpoint -- geometryType esriGeometryPoint + distance/units turns
         // the point into a circular search area server-side.
-        async function queryArcgisNear(baseUrl, lat, lng, outFields, orderByField) {
+        //
+        // resultRecordCount is set to the service's own maxRecordCount
+        // (1000 for both layers used here), not some small display-sized
+        // number -- a busy corridor easily has 40+ RoW permit segments
+        // within 200m (confirmed directly: 44 near the Cass/Henry/2nd Ave
+        // construction site), and this service runs in Esri's "basic
+        // tiles" query mode, which does NOT reliably apply orderByFields
+        // before truncating to resultRecordCount. A small cap here doesn't
+        // return "the 15 newest" -- it returns 15 in whatever order the
+        // tile cache happens to hand back, silently dropping real,
+        // in-range permits (this is exactly why ENG-23-557 -- a genuine,
+        // currently-active permit two blocks from UM Center for
+        // Innovation -- didn't show up before this fix). Fetching
+        // everything in range and doing the sort/dedupe entirely
+        // client-side (see sortPermitsNewestFirst/dedupeByField below)
+        // is the only way to make "newest N" and "active only" actually
+        // correct instead of order-dependent.
+        async function queryArcgisNear(baseUrl, lat, lng, outFields) {
             const params = new URLSearchParams({
                 f: 'json',
                 geometry: JSON.stringify({ x: lng, y: lat, spatialReference: { wkid: 4326 } }),
@@ -1933,8 +1953,7 @@
                 distance: String(PERMIT_LOOKUP_RADIUS_METERS),
                 units: 'esriSRUnit_Meter',
                 outFields,
-                orderByFields: `${orderByField} DESC`,
-                resultRecordCount: '15',
+                resultRecordCount: '1000',
             });
             const response = await fetch(`${baseUrl}?${params.toString()}`);
             if (!response.ok) throw new Error(`Permit query failed: ${response.status}`);
@@ -1980,6 +1999,21 @@
         }
         function sortPermitsNewestFirst(features, dateFields) {
             return [...features].sort((a, b) => permitSortDate(b, dateFields).localeCompare(permitSortDate(a, dateFields)));
+        }
+
+        // The RoW Points layer has one row per street-segment the permit
+        // touches, not one row per permit -- ENG-23-557 alone comes back as
+        // 3 rows (Henry St, Cass Ave, the alley), all with identical dates/
+        // description. Collapsing to one card per application_id avoids
+        // showing the same permit 2-3 times in a row.
+        function dedupeByField(features, field) {
+            const seen = new Set();
+            return features.filter((feature) => {
+                const key = feature.attributes[field];
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
         }
 
         // "Active" only applies to Right-of-Way permits -- they're the only
@@ -2101,13 +2135,13 @@
                 }
 
                 const [rowPermits, buildingPermits] = await Promise.all([
-                    queryArcgisNear(ROW_PERMITS_QUERY_URL, lat, lng, '*', 'start_date'),
-                    queryArcgisNear(BUILDING_PERMITS_QUERY_URL, lat, lng, 'record_id,address,issued_date,submitted_date,permit_type,work_description', 'issued_date'),
+                    queryArcgisNear(ROW_PERMITS_QUERY_URL, lat, lng, '*'),
+                    queryArcgisNear(BUILDING_PERMITS_QUERY_URL, lat, lng, 'record_id,address,issued_date,submitted_date,permit_type,work_description'),
                 ]);
 
                 permitLookupLastResults = {
-                    rowPermits: sortPermitsNewestFirst(rowPermits, ['start_date', 'permit_issued_date']),
-                    buildingPermits: sortPermitsNewestFirst(buildingPermits, ['issued_date', 'submitted_date']),
+                    rowPermits: sortPermitsNewestFirst(dedupeByField(rowPermits, 'application_id'), ['start_date', 'permit_issued_date']),
+                    buildingPermits: sortPermitsNewestFirst(dedupeByField(buildingPermits, 'record_id'), ['issued_date', 'submitted_date']),
                     label,
                 };
                 renderPermitLookupResults();
