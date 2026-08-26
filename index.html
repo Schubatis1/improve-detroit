@@ -139,6 +139,9 @@
         <button id="permitLookupMenuBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Permit Lookup
         </button>
+        <button id="legalResourcesMenuBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
+            Legal Resources
+        </button>
         <button id="releaseNotesMenuBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Release Notes
         </button>
@@ -549,6 +552,128 @@
         <p id="permitLookupStatus" class="text-xs text-slate-500 mb-3"></p>
 
         <div id="permitLookupResults" class="flex flex-col gap-4 pb-8"></div>
+    </div>
+
+    <!-- Legal Resources: read-only cheat sheet on a cyclist's rights and a
+         motorist's/officer's duties around bike lanes under Michigan law,
+         for a rider to reference if stopped by police. Static content (no
+         Firestore/network calls) -- every citation below was checked
+         against the Michigan Legislature's compiled laws, the Michigan
+         Administrative Code (Uniform Traffic Code, R 28 Motor Vehicle
+         Traffic Rules), and the Michigan State Police/Office of Highway
+         Safety Planning's own "Guide for the Public" and "Guide for Law
+         Enforcement Officers" bicycle-law handouts, so it reflects what an
+         officer is actually trained on, not just advocacy talking points. -->
+    <div id="legalResourcesScreen" class="hidden fixed inset-0 md:inset-x-[max(0px,calc(50%-30rem))] md:inset-y-6 md:rounded-2xl md:shadow-2xl md:border md:border-black/5 md:bg-white bg-[#eef7f5] z-[55] flex flex-col p-4 overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-montserrat font-extrabold text-detroit-dark">Legal Resources</h2>
+            <button id="legalResourcesCloseBtn" aria-label="Close" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark">&times;</button>
+        </div>
+
+        <div class="w-32 mx-auto mb-2">
+            <svg viewBox="0 0 300 260" role="img" aria-label="Illustration of the Spirit of Detroit statue wearing a police uniform">
+                <rect x="40" y="225" width="220" height="18" rx="4" fill="#004445"/>
+                <path d="M70,225 C60,170 90,120 110,110 L190,110 C210,120 240,170 230,225 Z" fill="#19a696"/>
+                <path d="M110,120 C85,130 70,150 68,175 C67,185 78,190 88,183 C95,160 100,140 118,125 Z" fill="#19a696"/>
+                <ellipse cx="72" cy="178" rx="14" ry="10" fill="#a0d5b3"/>
+                <circle cx="66" cy="173" r="4" fill="#0d5a52"/>
+                <circle cx="76" cy="171" r="3.5" fill="#0d5a52"/>
+                <circle cx="72" cy="182" r="3.5" fill="#0d5a52"/>
+                <path d="M190,120 C225,122 255,110 268,90 C273,83 265,75 258,80 C244,98 220,108 185,128 Z" fill="#19a696"/>
+                <circle cx="266" cy="80" r="16" fill="#f2c94c"/>
+                <g stroke="#f2c94c" stroke-width="2">
+                    <line x1="266" y1="55" x2="266" y2="45"/>
+                    <line x1="284" y1="65" x2="292" y2="58"/>
+                    <line x1="288" y1="80" x2="298" y2="80"/>
+                    <line x1="284" y1="95" x2="292" y2="102"/>
+                </g>
+                <rect x="95" y="185" width="110" height="10" rx="3" fill="#1d3a6b"/>
+                <rect x="140" y="182" width="20" height="16" rx="2" fill="#f2c94c"/>
+                <circle cx="150" cy="88" r="34" fill="#19a696"/>
+                <path d="M150,140 l10,6 v14 c0,10 -6,16 -10,18 c-4,-2 -10,-8 -10,-18 v-14 z" fill="#f2c94c" stroke="#c9971f" stroke-width="1"/>
+                <ellipse cx="150" cy="62" rx="42" ry="9" fill="#1d3a6b"/>
+                <path d="M118,62 C118,40 130,26 150,26 C170,26 182,40 182,62 Z" fill="#1d3a6b"/>
+                <rect x="132" y="55" width="36" height="8" rx="3" fill="#0d2144"/>
+                <circle cx="150" cy="45" r="7" fill="#f2c94c"/>
+                <circle cx="140" cy="90" r="3" fill="#0d5a52"/>
+                <circle cx="160" cy="90" r="3" fill="#0d5a52"/>
+            </svg>
+        </div>
+        <p class="text-center text-[11px] text-slate-400 mb-4">The Spirit of Detroit, badge and all.</p>
+
+        <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 text-xs text-amber-900">
+            This is general information compiled from official Michigan and Detroit-area sources, not legal advice. If you're stopped, stay calm, be polite, and comply with lawful orders -- you can always sort out who's right afterward with a lawyer, the League of Michigan Bicyclists, or in court. Asking "am I being detained?" and "what law do you believe I violated?" is reasonable; arguing the law in the moment is not.
+        </div>
+
+        <h3 class="text-xs font-bold text-detroit-navy uppercase tracking-wide mb-2">Cheat Sheet: A Cyclist's Rights</h3>
+        <div class="bg-white rounded-lg shadow p-3 mb-4">
+            <ul class="text-xs text-slate-700 flex flex-col gap-2 list-disc pl-4">
+                <li>You have all the <strong>rights and duties of a motor vehicle driver</strong> -- same road, same rules. <span class="text-slate-400">MCL 257.657</span></li>
+                <li>You are <strong>not required to ride in a bike lane</strong>, on a sidepath, or on the shoulder just because one exists. Michigan's Vehicle Code defines "roadway" -- the part of the street the "keep right" rule applies to -- as excluding bike lanes, parking lanes, shoulders, and sidewalks. <span class="text-slate-400">MCL 257.55</span>. MDOT's own driver brochure says it plainly: bicyclists "are not required to use a bicycle lane and may leave a bicycle lane to turn left or to avoid hazards."</li>
+                <li>When riding slower than traffic you generally keep right, but you may <strong>take the full lane</strong> when: passing, turning left, the right edge/bike lane is unsafe or unusable (glass, potholes, debris, a door zone, a parked car, a lane too narrow to share), traffic is turning right but you're going straight, or you're on a one-way street. Any one of those is enough. <span class="text-slate-400">MCL 257.660a</span></li>
+                <li>Riding at less than the speed of traffic while lawfully keeping right is <strong>not "impeding traffic."</strong> <span class="text-slate-400">MCL 257.676b</span></li>
+                <li>You may ride <strong>two abreast</strong>. <span class="text-slate-400">MCL 257.660b</span></li>
+                <li>You may ride on a sidewalk or in a crosswalk (unless a local sign or ordinance says otherwise) if you yield to pedestrians and signal audibly before passing them. <span class="text-slate-400">MCL 257.660c</span></li>
+                <li>A civil bicycling infraction generally does <strong>not</strong> go on your driving record with the Secretary of State, except violations involving a controlled substance, a minor in possession of alcohol, or open intoxicants.</li>
+            </ul>
+        </div>
+
+        <h3 class="text-xs font-bold text-detroit-navy uppercase tracking-wide mb-2">What Drivers (and Officers) Are Supposed to Do</h3>
+        <div class="bg-white rounded-lg shadow p-3 mb-4">
+            <ul class="text-xs text-slate-700 flex flex-col gap-2 list-disc pl-4">
+                <li>Pass you with at least <strong>3 feet of clearance</strong> to your left -- or a safe distance and speed if 3 feet isn't practicable -- and may cross into a no-passing zone to do it safely. <span class="text-slate-400">MCL 257.636(2)-(3)</span></li>
+                <li>It's <strong>illegal to drive or park in a marked bicycle lane</strong>; a vehicle may only cross it to enter/exit a driveway or to make a turn. <span class="text-slate-400">Mich Admin Code R 28.1322</span></li>
+                <li>Must <strong>yield to you before turning</strong> -- no "right hooks" -- and must exercise due care to avoid colliding with you on the roadway. <span class="text-slate-400">MCL 257.612; Mich Admin Code R 28.1716</span></li>
+                <li>Opening a car door into traffic (dooring) is itself prohibited. <span class="text-slate-400">Mich Admin Code R 28.1498</span></li>
+                <li>A city, township, or village can adopt its own traffic ordinances, but a local ordinance can't be weaker than or conflict with state law. <span class="text-slate-400">MCL 257.951, 257.605, 257.606</span></li>
+            </ul>
+        </div>
+
+        <h3 class="text-xs font-bold text-detroit-navy uppercase tracking-wide mb-2">Official Resources</h3>
+        <div class="bg-white rounded-lg shadow p-3 mb-4">
+            <p class="text-[10px] font-bold text-detroit-navy uppercase mb-1">Michigan Dept. of Transportation (MDOT)</p>
+            <ul class="text-xs flex flex-col gap-1 mb-3">
+                <li><a href="https://www.michigan.gov/mdot/travel/safety/road-users/bicycling" target="_blank" rel="noopener" class="text-detroit-teal underline">MDOT Bicycling</a> -- general MDOT bicycling safety hub</li>
+                <li><a href="https://www.michigan.gov/-/media/Project/Websites/MDOT/Travel/Safety/Road-User/Bicycling/Bicycle-Lane-Brochure.pdf" target="_blank" rel="noopener" class="text-detroit-teal underline">What Every Michigan Driver Should Know About Bicycle Lanes</a> (PDF)</li>
+            </ul>
+            <p class="text-[10px] font-bold text-detroit-navy uppercase mb-1">Michigan State Police / Office of Highway Safety Planning</p>
+            <ul class="text-xs flex flex-col gap-1 mb-3">
+                <li><a href="https://www.michigan.gov/msp/-/media/Project/Websites/msp/ohsp/1_Fall_2022_Teen/8015-Michigan-Bicyclist-Laws-Guide-for-the-Public.pdf" target="_blank" rel="noopener" class="text-detroit-teal underline">Michigan Bicyclist Laws: Guide for the Public</a> (PDF) -- the plain-language version</li>
+                <li><a href="https://www.michigan.gov/-/media/Project/Websites/msp/ohsp/pdfs2/FINALBikeMVCTIPCard.pdf" target="_blank" rel="noopener" class="text-detroit-teal underline">Michigan Bicycle Laws: Guide for Law Enforcement Officers</a> (PDF) -- literally what officers are handed</li>
+            </ul>
+            <p class="text-[10px] font-bold text-detroit-navy uppercase mb-1">League of Michigan Bicyclists (LMB)</p>
+            <ul class="text-xs flex flex-col gap-1 mb-3">
+                <li><a href="https://lmb.org/bike-mi/michigan-compiled-laws-mcl-bicycles-and-the-law/" target="_blank" rel="noopener" class="text-detroit-teal underline">Michigan Compiled Laws (MCL): Bicycles and the Law</a></li>
+                <li><a href="https://lmb.org/2020/06/bikes-may-use-full-lane/" target="_blank" rel="noopener" class="text-detroit-teal underline">Bikes May Use Full Lane</a> -- explains the 660a exceptions</li>
+            </ul>
+            <p class="text-[10px] font-bold text-detroit-navy uppercase mb-1">Detroit Greenways Coalition</p>
+            <ul class="text-xs flex flex-col gap-1 mb-3">
+                <li><a href="https://detroitgreenways.org/laws/for-motorists/" target="_blank" rel="noopener" class="text-detroit-teal underline">For Motorists</a> -- Detroit-specific rules on bike lanes, dooring, and right turns</li>
+                <li><a href="https://detroitgreenways.org/laws/definitions/" target="_blank" rel="noopener" class="text-detroit-teal underline">State Law Definitions</a> -- what "roadway," "street," and "traffic" actually mean</li>
+            </ul>
+            <p class="text-[10px] font-bold text-detroit-navy uppercase mb-1">Michigan Legislature</p>
+            <ul class="text-xs flex flex-col gap-1">
+                <li><a href="https://www.legislature.mi.gov/Laws/MCL?objectName=mcl-chap257" target="_blank" rel="noopener" class="text-detroit-teal underline">Michigan Vehicle Code, MCL Chapter 257</a> -- full statute text</li>
+            </ul>
+        </div>
+
+        <h3 class="text-xs font-bold text-detroit-navy uppercase tracking-wide mb-2">Citation Quick-Reference</h3>
+        <div class="bg-white rounded-lg shadow p-3 mb-8">
+            <div class="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1.5 text-xs">
+                <span class="text-slate-700">Rights &amp; duties of bicyclists</span><span class="font-mono text-slate-500 text-right">MCL 257.657</span>
+                <span class="text-slate-700">"Roadway" excludes bike lanes</span><span class="font-mono text-slate-500 text-right">MCL 257.55</span>
+                <span class="text-slate-700">Keep right / full-lane exceptions</span><span class="font-mono text-slate-500 text-right">MCL 257.660a</span>
+                <span class="text-slate-700">Two abreast</span><span class="font-mono text-slate-500 text-right">MCL 257.660b</span>
+                <span class="text-slate-700">Sidewalk &amp; crosswalk riding</span><span class="font-mono text-slate-500 text-right">MCL 257.660c</span>
+                <span class="text-slate-700">Not "impeding traffic"</span><span class="font-mono text-slate-500 text-right">MCL 257.676b</span>
+                <span class="text-slate-700">3-foot passing law</span><span class="font-mono text-slate-500 text-right">MCL 257.636(2)-(3)</span>
+                <span class="text-slate-700">Yield before turning / signals</span><span class="font-mono text-slate-500 text-right">MCL 257.612, 257.648</span>
+                <span class="text-slate-700">Local ordinances can't conflict</span><span class="font-mono text-slate-500 text-right">MCL 257.951, .605, .606</span>
+                <span class="text-slate-700">No driving/parking in bike lane</span><span class="font-mono text-slate-500 text-right">Admin Code R 28.1322</span>
+                <span class="text-slate-700">Driver's due-care duty</span><span class="font-mono text-slate-500 text-right">Admin Code R 28.1716</span>
+                <span class="text-slate-700">Dooring into traffic prohibited</span><span class="font-mono text-slate-500 text-right">Admin Code R 28.1498</span>
+            </div>
+        </div>
     </div>
 
     <!-- Release Notes: read-only, rendered from the RELEASE_NOTES const below. -->
@@ -964,13 +1089,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.44.4';
+        const APP_VERSION = '3.45.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.45.0', date: '2026-08-26', notes: [
+                'Added "Legal Resources" to the hamburger menu -- a cheat sheet on a cyclist\'s rights and a motorist\'s/officer\'s duties around bike lanes under Michigan law (e.g. bike lane use is optional, when you may take the full lane, the 3-foot passing law), with MCL and Michigan Administrative Code citations plus links to MDOT, Michigan State Police/OHSP, the League of Michigan Bicyclists, and the Detroit Greenways Coalition. Meant as a quick reference if stopped by police, not legal advice.',
+            ] },
             { version: '3.44.4', date: '2026-08-26', notes: [
                 'Each Right-of-Way permit result in Permit Lookup now links to the City of Detroit\'s official Right of Way Management portal (detroitmi.portal.opengov.com) to verify the live record -- that system turned out to have no public API (its search backend returned an auth error when queried directly), so this can\'t pull its data in the way the open-data feeds are queried; the link is a fast way to cross-check the permit found here (which can lag the live system by a day or more) against the source of truth.',
             ] },
@@ -2134,6 +2262,16 @@
         });
         permitLookupCloseBtn.addEventListener('click', () => permitLookupScreen.classList.add('hidden'));
         permitLookupActiveOnlyCheckbox.addEventListener('change', renderPermitLookupResults);
+
+        // Legal Resources screen -- static content, no data fetch, so just open/close.
+        const legalResourcesMenuBtn = document.getElementById('legalResourcesMenuBtn');
+        const legalResourcesScreen = document.getElementById('legalResourcesScreen');
+        const legalResourcesCloseBtn = document.getElementById('legalResourcesCloseBtn');
+        legalResourcesMenuBtn.addEventListener('click', () => {
+            closeMenu();
+            legalResourcesScreen.classList.remove('hidden');
+        });
+        legalResourcesCloseBtn.addEventListener('click', () => legalResourcesScreen.classList.add('hidden'));
 
         permitLookupSearchBtn.addEventListener('click', async () => {
             permitLookupSearchBtn.disabled = true;
