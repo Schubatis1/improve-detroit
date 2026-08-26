@@ -136,6 +136,9 @@
         <button id="parkingDeptMenuBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Notify Parking Dept
         </button>
+        <button id="permitLookupMenuBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
+            Permit Lookup
+        </button>
         <button id="releaseNotesMenuBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Release Notes
         </button>
@@ -500,6 +503,47 @@
                 <div id="parkingDeptMailStreamResult" class="hidden bg-white border border-detroit-mint rounded-lg p-3 mt-2"></div>
             </div>
         </div>
+    </div>
+
+    <!-- Permit Lookup: read-only search against the City of Detroit's public
+         open-data ArcGIS REST services -- Right-of-Way permits (the kind
+         that actually authorizes closing a sidewalk/bike lane/roadway for
+         construction, as opposed to a plain BSEED building permit) and
+         BSEED building permits, near a saved geofence or a typed address.
+         Doesn't touch Firestore, SeeClickFix, or any report/complaint --
+         just two direct browser fetches to Esri's own REST API
+         (services2.arcgis.com), which sends Access-Control-Allow-Origin: *
+         (verified directly), so unlike SeeClickFix/Plate Recognizer/
+         MailStream this never needs to route through /api/proxy. See
+         queryArcgisNear/geocodeAddress below.
+
+         This is a quick first look, not proof of compliance: a permit
+         found nearby doesn't confirm it's the one covering what you're
+         looking at (or that its conditions -- e.g. a required detour --
+         are being followed on site), and the City's GIS data can lag real
+         permit issuance/closure. Always confirm with DPW before relying on
+         it. -->
+    <div id="permitLookupScreen" class="hidden fixed inset-0 md:inset-x-[max(0px,calc(50%-30rem))] md:inset-y-6 md:rounded-2xl md:shadow-2xl md:border md:border-black/5 md:bg-white bg-[#eef7f5] z-[55] flex flex-col p-4 overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-montserrat font-extrabold text-detroit-dark">Permit Lookup</h2>
+            <button id="permitLookupCloseBtn" aria-label="Close" class="text-2xl leading-none text-slate-400 hover:text-detroit-dark">&times;</button>
+        </div>
+        <p class="text-xs text-slate-500 mb-3">Searches the City of Detroit's public open-data portal for nearby Right-of-Way permits (sidewalk/bike lane/roadway closures) and BSEED building permits. Informational only -- always verify with DPW that a permit found here actually covers what you're looking at.</p>
+
+        <label for="permitLookupGeofence" class="text-xs font-semibold text-detroit-navy mb-1">Saved geofence</label>
+        <select id="permitLookupGeofence" class="w-full text-sm border border-detroit-mint rounded px-2 py-2 mb-3">
+            <option value="">-- choose a saved geofence --</option>
+        </select>
+
+        <label for="permitLookupAddress" class="text-xs font-semibold text-detroit-navy mb-1">...or an address</label>
+        <input id="permitLookupAddress" type="text" placeholder="e.g. 440 Burroughs St, Detroit, MI" class="w-full text-sm border border-detroit-mint rounded px-2 py-2 mb-3">
+
+        <button id="permitLookupSearchBtn" class="w-full bg-detroit-teal text-white font-montserrat font-semibold py-3 rounded-lg shadow hover:bg-detroit-dark transition mb-3 disabled:opacity-50">
+            Search
+        </button>
+        <p id="permitLookupStatus" class="text-xs text-slate-500 mb-3"></p>
+
+        <div id="permitLookupResults" class="flex flex-col gap-4 pb-8"></div>
     </div>
 
     <!-- Release Notes: read-only, rendered from the RELEASE_NOTES const below. -->
@@ -915,13 +959,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.43.3';
+        const APP_VERSION = '3.44.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.44.0', date: '2026-08-26', notes: [
+                'Added "Permit Lookup" to the hamburger menu -- searches the City of Detroit\'s public open-data portal for Right-of-Way permits (sidewalk/bike lane/roadway closures) and BSEED building permits near a saved geofence or a typed address. Read-only and informational: a permit found nearby is not proof it covers what you\'re looking at, or that its conditions (like a required detour) are actually being followed -- always confirm with DPW.',
+            ] },
             { version: '3.43.3', date: '2026-08-23', notes: [
                 'Fixed a large "Mark as Notified" run (20+ issues) tripping SeeClickFix\'s rate limit partway through and failing outright on the affected issues, with no retry. Comment posting now retries 429s/network failures with backoff, same as the existing comment-fetch retry logic, and each issue is now paced 300ms apart instead of firing back-to-back. The new "Car traveling in bike lane category" detection mode\'s SeeClickFix lookup (added last release, for issues reported before that mode shipped) got the same retry treatment -- it could hit the same rate limit during a big Search run.',
             ] },
@@ -1854,6 +1901,158 @@
             if (editingGeofenceId) await deleteGeofence(editingGeofenceId);
         });
         document.getElementById('gfSaveBtn').addEventListener('click', saveGeofenceForm);
+
+        // Permit Lookup screen (hamburger menu) -- see the #permitLookupScreen
+        // comment above for what this is and its limits. Both FeatureServers
+        // below send Access-Control-Allow-Origin: * (verified directly
+        // against services2.arcgis.com), so these are called straight from
+        // the browser like the Google/Leaflet calls elsewhere in this file,
+        // not routed through /api/proxy.
+        const PERMIT_LOOKUP_RADIUS_METERS = 200;
+        const ROW_PERMITS_QUERY_URL = 'https://services2.arcgis.com/qvkbeam7Wirps6zC/arcgis/rest/services/detroit_right_of_way_permits/FeatureServer/5/query';
+        const BUILDING_PERMITS_QUERY_URL = 'https://services2.arcgis.com/qvkbeam7Wirps6zC/arcgis/rest/services/bseed_building_permits/FeatureServer/0/query';
+
+        // Buffer-around-a-point query against an Esri FeatureServer/query
+        // endpoint -- geometryType esriGeometryPoint + distance/units turns
+        // the point into a circular search area server-side.
+        async function queryArcgisNear(baseUrl, lat, lng, outFields, orderByField) {
+            const params = new URLSearchParams({
+                f: 'json',
+                geometry: JSON.stringify({ x: lng, y: lat, spatialReference: { wkid: 4326 } }),
+                geometryType: 'esriGeometryPoint',
+                inSR: '4326',
+                spatialRel: 'esriSpatialRelIntersects',
+                distance: String(PERMIT_LOOKUP_RADIUS_METERS),
+                units: 'esriSRUnit_Meter',
+                outFields,
+                orderByFields: `${orderByField} DESC`,
+                resultRecordCount: '15',
+            });
+            const response = await fetch(`${baseUrl}?${params.toString()}`);
+            if (!response.ok) throw new Error(`Permit query failed: ${response.status}`);
+            const data = await response.json();
+            if (data.error) throw new Error(data.error.message || 'Permit query failed');
+            return data.features || [];
+        }
+
+        // esriFieldTypeDateOnly fields (every date field used here) come
+        // back as a plain 'YYYY-MM-DD' string, not an epoch -- parsed as
+        // UTC midnight so the displayed day never shifts with the viewer's
+        // timezone.
+        function arcgisDateToText(value) {
+            if (!value) return 'unknown';
+            const date = new Date(`${value}T00:00:00Z`);
+            if (Number.isNaN(date.getTime())) return 'unknown';
+            return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
+        }
+
+        async function geocodeAddress(address) {
+            const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(`${address}, Detroit, MI`)}&key=${CONFIG.googleMapsApiKey}`;
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`Geocoding failed: ${response.status}`);
+            const data = await response.json();
+            if (data.status !== 'OK' || !data.results?.[0]) throw new Error(`Address not found (${data.status})`);
+            const loc = data.results[0].geometry.location;
+            return { lat: loc.lat, lng: loc.lng, formattedAddress: data.results[0].formatted_address };
+        }
+
+        function renderRowPermitCard(feature) {
+            const a = feature.attributes;
+            const impactFlags = ['sidewalk', 'roadway', 'berm', 'alley']
+                .filter((k) => a[`is_${k}`])
+                .map((k) => k[0].toUpperCase() + k.slice(1));
+            const description = (a.work_description || '').slice(0, 500);
+            return `
+                <div class="bg-white border border-detroit-mint rounded-lg p-3">
+                    <p class="text-sm font-semibold text-detroit-dark">${escapeHtml(a.permit_type || 'Right-of-Way Permit')} &mdash; ${escapeHtml(a.agency_name || 'Unknown agency')}</p>
+                    <p class="text-[10px] text-slate-400 font-mono">${escapeHtml(a.application_id || '')}${a.job_number ? ` &middot; Job ${escapeHtml(a.job_number)}` : ''}</p>
+                    <p class="text-xs text-slate-500 mt-1">${arcgisDateToText(a.start_date)} &ndash; ${arcgisDateToText(a.end_date)} (issued ${arcgisDateToText(a.permit_issued_date)})</p>
+                    ${impactFlags.length ? `<p class="text-xs mt-1"><span class="inline-block bg-detroit-gold/30 text-detroit-dark rounded px-2 py-0.5 font-semibold">${impactFlags.join(' / ')} impacted</span></p>` : ''}
+                    ${description ? `<p class="text-xs text-slate-600 mt-2 whitespace-pre-line">${escapeHtml(description)}${(a.work_description || '').length > 500 ? '…' : ''}</p>` : ''}
+                </div>
+            `;
+        }
+
+        function renderBuildingPermitCard(feature) {
+            const a = feature.attributes;
+            const description = (a.work_description || '').slice(0, 300);
+            return `
+                <div class="bg-white border border-detroit-mint rounded-lg p-3">
+                    <p class="text-sm font-semibold text-detroit-dark">${escapeHtml(a.permit_type || 'Building Permit')}</p>
+                    <p class="text-[10px] text-slate-400 font-mono">${escapeHtml(a.record_id || '')}${a.address ? ` &middot; ${escapeHtml(a.address)}` : ''}</p>
+                    <p class="text-xs text-slate-500 mt-1">Issued ${arcgisDateToText(a.issued_date)} (submitted ${arcgisDateToText(a.submitted_date)})</p>
+                    ${description ? `<p class="text-xs text-slate-600 mt-2 whitespace-pre-line">${escapeHtml(description)}${(a.work_description || '').length > 300 ? '…' : ''}</p>` : ''}
+                </div>
+            `;
+        }
+
+        const permitLookupMenuBtn = document.getElementById('permitLookupMenuBtn');
+        const permitLookupScreen = document.getElementById('permitLookupScreen');
+        const permitLookupCloseBtn = document.getElementById('permitLookupCloseBtn');
+        const permitLookupGeofenceSelect = document.getElementById('permitLookupGeofence');
+        const permitLookupAddressInput = document.getElementById('permitLookupAddress');
+        const permitLookupSearchBtn = document.getElementById('permitLookupSearchBtn');
+        const permitLookupStatus = document.getElementById('permitLookupStatus');
+        const permitLookupResults = document.getElementById('permitLookupResults');
+
+        function populatePermitLookupGeofences() {
+            const previousValue = permitLookupGeofenceSelect.value;
+            permitLookupGeofenceSelect.innerHTML = '<option value="">-- choose a saved geofence --</option>'
+                + geofencesCache.map((g, i) => `<option value="${i}">${escapeHtml(g.name)}</option>`).join('');
+            permitLookupGeofenceSelect.value = previousValue;
+        }
+
+        permitLookupMenuBtn.addEventListener('click', () => {
+            closeMenu();
+            populatePermitLookupGeofences();
+            permitLookupScreen.classList.remove('hidden');
+        });
+        permitLookupCloseBtn.addEventListener('click', () => permitLookupScreen.classList.add('hidden'));
+
+        permitLookupSearchBtn.addEventListener('click', async () => {
+            permitLookupSearchBtn.disabled = true;
+            permitLookupResults.innerHTML = '';
+            permitLookupStatus.textContent = 'Searching…';
+            try {
+                let lat, lng, label;
+                if (permitLookupGeofenceSelect.value !== '') {
+                    const geofence = geofencesCache[Number(permitLookupGeofenceSelect.value)];
+                    lat = geofence.lat;
+                    lng = geofence.lng;
+                    label = geofence.name;
+                } else {
+                    const address = permitLookupAddressInput.value.trim();
+                    if (!address) throw new Error('Choose a saved geofence or enter an address.');
+                    const geocoded = await geocodeAddress(address);
+                    lat = geocoded.lat;
+                    lng = geocoded.lng;
+                    label = geocoded.formattedAddress;
+                }
+
+                const [rowPermits, buildingPermits] = await Promise.all([
+                    queryArcgisNear(ROW_PERMITS_QUERY_URL, lat, lng, '*', 'permit_issued_date'),
+                    queryArcgisNear(BUILDING_PERMITS_QUERY_URL, lat, lng, 'record_id,address,issued_date,submitted_date,permit_type,work_description', 'issued_date'),
+                ]);
+
+                permitLookupStatus.textContent = `${rowPermits.length} right-of-way permit(s), ${buildingPermits.length} building permit(s) within ${PERMIT_LOOKUP_RADIUS_METERS}m of ${label}.`;
+                permitLookupResults.innerHTML = `
+                    <div>
+                        <h3 class="text-sm font-montserrat font-bold text-detroit-navy mb-2">Right-of-Way Permits (sidewalk / bike lane / roadway)</h3>
+                        ${rowPermits.length ? rowPermits.map(renderRowPermitCard).join('') : '<p class="text-xs text-slate-400">None found nearby.</p>'}
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-montserrat font-bold text-detroit-navy mb-2">BSEED Building Permits</h3>
+                        ${buildingPermits.length ? buildingPermits.map(renderBuildingPermitCard).join('') : '<p class="text-xs text-slate-400">None found nearby.</p>'}
+                    </div>
+                `;
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                permitLookupStatus.textContent = `Error: ${message}`;
+                logToConsole(`Permit Lookup failed: ${message}`, true);
+            } finally {
+                permitLookupSearchBtn.disabled = false;
+            }
+        });
 
         // Release Notes screen
         const releaseNotesMenuBtn = document.getElementById('releaseNotesMenuBtn');
