@@ -3732,14 +3732,23 @@
             submitAllBtn.disabled = true;
             const pending = queue.filter((i) => i.status === 'ready' || i.status === 'error');
             logToConsole(`Submitting ${pending.length} queued photo(s)...`);
-            const stagger = pending.length > 3;
+            // The 1-minute stagger exists only to avoid tripping the City's
+            // rate limit, so it should only apply between photos that are
+            // actually posted to SeeClickFix. Suppressed reports skip the
+            // City entirely (see submitItem) and never need to wait, nor do
+            // they count toward triggering the stagger for the rest.
+            const cityBoundCount = pending.filter((i) => !i.els.suppressReport.checked).length;
+            const stagger = cityBoundCount > 3;
+            let citySubmissionsSoFar = 0;
             for (const [index, item] of pending.entries()) {
-                if (stagger && index > 0) {
+                const isCityBound = !item.els.suppressReport.checked;
+                if (stagger && isCityBound && citySubmissionsSoFar > 0) {
                     logToConsole(`Waiting 1 minute before submitting report ${index + 1} of ${pending.length}...`);
                     submitAllBtn.textContent = `Waiting to submit ${index + 1} of ${pending.length}...`;
                     await new Promise((resolve) => setTimeout(resolve, 60000));
                 }
                 await submitItem(item);
+                if (isCityBound) citySubmissionsSoFar++;
             }
             submitAllBtn.disabled = false;
             updateSubmitAllVisibility();
