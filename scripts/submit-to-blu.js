@@ -217,6 +217,14 @@ async function fillSubmitForm(page, entry, photoPath, notes) {
         await page.getByPlaceholder('Enter plate #').fill(entry.plate.trim());
     }
 
+    // BLU's Sept 2026 app update added dedicated Company Name/USDOT Number
+    // fields, but only to their mobile app -- confirmed via a dry-run
+    // screenshot that this web submit form still shows only Notes for that
+    // (its own field description now reads "Include USDOT numbers, company
+    // names, & additional information"), with a banner noting the web form
+    // lacks some of the mobile app's functionality. BLU has no public API,
+    // so there's no way for this script to reach the mobile-only fields --
+    // Notes (identityNote, appended in main() below) is the only channel.
     await page.getByPlaceholder('Enter notes').fill(notes);
     await page.getByPlaceholder('Geolocation (preferred)').fill(`${entry.lat}, ${entry.lng}`);
     // entry.metroCity is set client-side from the photo's EXIF GPS (see
@@ -346,12 +354,11 @@ async function main() {
                 const ticketNote = entry.suppressed
                     ? 'Recurring/known incident -- not reported to the City of Detroit for this occurrence.'
                     : `Incident reported to the City of Detroit as #${issueId}. https://seeclickfix.com/issues/${issueId}`;
-                // BLU's own submit form has no dedicated company-name/USDOT
-                // field (confirmed by inspecting every selector fillSubmitForm
-                // uses below) -- appending it to the free-text Notes field is
-                // the guaranteed way for this data to actually reach BLU, so
-                // their advocacy work can use it regardless of whether a
-                // structured field ever gets added to the form.
+                // BLU's dedicated Company Name/USDOT Number fields are
+                // mobile-app-only (confirmed via dry-run screenshot -- this
+                // web submit form still has just Notes, see fillSubmitForm),
+                // so append here to the free-text Notes field, which is the
+                // only channel this script (no public API) can reach.
                 const identityParts = [];
                 if (entry.companyName) identityParts.push(`Company: ${entry.companyName}`);
                 if (entry.usdotNumber) identityParts.push(`USDOT #${entry.usdotNumber}`);

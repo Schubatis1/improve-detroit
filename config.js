@@ -55,23 +55,32 @@ window.APP_CONFIG = {
 
     // Applied to every photo that doesn't match a more specific geofence
     // below. `descriptions` is a pool of message templates -- one is chosen
-    // at random per photo. Use {{ADDRESS}} as a placeholder for the
-    // resolved street address.
+    // at random per photo (or handed to Gemini as candidate starting points
+    // to rewrite against the actual photo -- see classifyPhotoWithGemini's
+    // vehicleDescriptionInstructions). Use {{ADDRESS}} as a placeholder for
+    // the resolved street address.
+    //
+    // Kept deliberately plain and short -- lead with the vehicle/object and
+    // location, no legal-violation framing (no "in violation of...", no
+    // statute/code citations, no "designated path"/"impeding cyclist
+    // right-of-way"/"non-motorized transportation" stock phrasing). Derived
+    // from reviewing 100 real submissions: hand-written/edited descriptions
+    // consistently read like a quick factual note, not a legal filing --
+    // legal citations only belong in specific pre-approved geofence
+    // templates for known recurring hotspots, not generated freely here.
     defaultWorkflow: {
         summary: 'Vehicle Blocking Bike Lane',
         descriptions: [
-            'Vehicle illegally parked in bike lane near {{ADDRESS}}, obstructing bicycle traffic in violation of Mich. Admin. Code R. 28.1322.',
-            'Bike lane obstruction reported at {{ADDRESS}}. Vehicle is impeding the active lane and pushing cyclists into motor traffic.',
-            'Illegal parking in dedicated bicycle lane at {{ADDRESS}}. Path of travel is obstructed.',
-            'Active traffic hazard at {{ADDRESS}}: Vehicle parked in designated bike lane, violating MCL 257.676b (impeding traffic).',
-            'Bicycle lane obstruction near {{ADDRESS}}. Vehicle is illegally stopped/parked, impeding cyclist right-of-way.',
-            'Cyclist safety concern at {{ADDRESS}}: Vehicle parked in the bike lane in violation of Mich. Admin. Code R. 28.1322, compromising the travel lane.',
-            'Illegal vehicle obstruction in bike lane at {{ADDRESS}}. Requesting enforcement under MCL 257.676b to clear the travel lane.',
-            'Bicycle lane obstruction near {{ADDRESS}}. Vehicle is illegally parked, posing a safety hazard to non-motorized transportation.',
-            'Vehicle blocking designated bike lane near {{ADDRESS}}, violating local traffic codes and Mich. Admin. Code R. 28.1322.',
-            'Traffic code violation at {{ADDRESS}}: Vehicle illegally parked in bicycle lane, obstructing the designated path.',
-            'Vehicle illegally parked in bike lane near {{ADDRESS}}, violating Detroit City Code Sec. 55-6-7(a)(13) and obstructing bicycle traffic.',
-            'Bicycle lane obstruction at {{ADDRESS}}. Vehicle is illegally stopped/parked in violation of Detroit City Code Sec. 55-6-7.',
+            'Vehicle parked in the bike lane near {{ADDRESS}}.',
+            'Vehicle blocking the bike lane near {{ADDRESS}}.',
+            'Car parked in bike lane near {{ADDRESS}}.',
+            'Vehicle stopped in the bike lane near {{ADDRESS}}, blocking the path of travel.',
+            'Truck parked in bike lane near {{ADDRESS}}.',
+            'Vehicle obstructing bike lane near {{ADDRESS}}.',
+            'Vehicle parked directly in the bike lane near {{ADDRESS}}.',
+            'Delivery truck blocking bike lane near {{ADDRESS}}.',
+            'Vehicle parked in the curbside bike lane near {{ADDRESS}}.',
+            'Vehicle in bike lane near {{ADDRESS}}, forcing cyclists into traffic.',
         ],
     },
 

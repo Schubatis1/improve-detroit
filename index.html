@@ -3454,6 +3454,25 @@
                         .replace(/\{\{PRIOR_COMPLAINTS\}\}/g, formatPriorComplaints(workflow.priorComplaintIds))
                 );
 
+                // Derived from reviewing 100 real submissions: descriptions
+                // the user actually wrote/edited by hand read like a quick
+                // factual note, not a legal filing -- short by default, with
+                // detail (vehicle color/make/model, exactly what's blocked)
+                // added only when it's genuinely visible and useful. Legal
+                // citations only ever appeared in fixed geofence templates
+                // for known hotspots, never in freely-written descriptions,
+                // so Gemini should never invent one here. Shared by both
+                // category branches below so "vehicle" and "other" reports
+                // read consistently.
+                const styleGuidance = 'Style for description: write like a person texting a quick factual note, not a '
+                    + 'legal filing. Lead with the vehicle/object and its location, not a legal-violation frame -- never '
+                    + 'write phrases like "in violation of", cite a specific law/code/statute, or use stock phrases like '
+                    + '"designated path", "impeding cyclist right-of-way", "path of travel is obstructed", "compromising '
+                    + 'the travel lane", or "non-motorized transportation" (say "cyclists" or "bike lane" instead). Keep '
+                    + "it as short as the facts warrant -- a single plain sentence is often enough; only add detail that's "
+                    + 'genuinely visible (color/make/model of the vehicle, exactly what it blocks, whether it looks '
+                    + 'occupied/running). ';
+
                 const vehicleDescriptionInstructions = geofence
                     ? 'leave description null. '
                     : 'For description: pick whichever of these candidate descriptions is the closest factual match to '
@@ -3462,7 +3481,8 @@
                         + 'in the photo that the authorities reviewing this report would need to understand the incident '
                         + '(e.g. exactly where the vehicle sits relative to the bike lane, whether it looks occupied or '
                         + 'running, what else is visibly blocked or obstructed). Judge only what is visibly true in the '
-                        + 'photo -- never comment on whether it looks legally parked or cite any rule or law. Candidates: '
+                        + 'photo -- never comment on whether it looks legally parked or cite any rule or law. '
+                        + styleGuidance + 'Candidates: '
                         + JSON.stringify(candidateDescriptions) + '. If the photo is too blurry, dark, distant, or '
                         + 'obstructed to confidently verify details against these candidates, set description to null '
                         + '(an unedited candidate will be used as a fallback) instead of guessing. ';
@@ -3487,7 +3507,8 @@
                     + 'bin, construction materials or equipment, a pothole or sinkhole, other debris, snow, etc. Leave '
                     + 'plate/make/model/color/company_name/usdot_number null. Fill description with one concise, specific '
                     + "sentence describing exactly what's in the photo and how it affects the bike lane, suitable for a city "
-                    + 'work-order description. Set suggest_sweep true only if the issue is loose material a street sweeper '
+                    + 'work-order description. ' + styleGuidance
+                    + 'Set suggest_sweep true only if the issue is loose material a street sweeper '
                     + 'could realistically clear (glass, sand, gravel, loose debris), false otherwise (e.g. a stuck bin, '
                     + 'construction equipment, a pothole). Set blu_category to "Construction" if construction-related, '
                     + 'otherwise "Other". '
