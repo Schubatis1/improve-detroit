@@ -14,7 +14,16 @@
  */
 window.APP_CONFIG = {
     seeClickFix: {
-        token: 'token-07/31/2026-07/30/2027--B10B9B5D01CC998EE5A6C6BB8266537173326DC0F21EFE605455E64047D75A81-1',
+        // The API token is intentionally NOT here. It lives as the
+        // SEECLICKFIX_TOKEN environment variable on Vercel and is attached
+        // to outbound requests by api/proxy.js, which every SeeClickFix
+        // call in this app already goes through. It was previously in this
+        // file, which is both committed to a public repo and served
+        // verbatim to anyone who loads the deployed site -- meaning anyone
+        // could read it and file real tickets with the City of Detroit
+        // under this account. Same reasoning as geminiApiKey below, but
+        // with a worse blast radius, since a SeeClickFix token can't be
+        // silently auto-revoked the way a Google key can.
         requestTypeId: '22880',
         natureQuestionId: '32751',
         timingQuestionId: '33446',
@@ -27,8 +36,19 @@ window.APP_CONFIG = {
         potholeRequestTypeId: '7047',
     },
 
-    googleMapsApiKey: 'AIzaSyAts-aj_Ezg_OtGj05Tkh8kXRLPUcA9fAg',
-    plateRecognizerApiKey: 'be8e6058bc8eeaced36a7a269e2f1e1337074bf7',
+    // googleMapsApiKey and plateRecognizerApiKey are intentionally NOT here
+    // either, for the same reason as the SeeClickFix token above -- both
+    // are billable, and both were readable by anyone. They're now the
+    // GOOGLE_MAPS_API_KEY and PLATE_RECOGNIZER_API_KEY environment
+    // variables on Vercel, injected by api/proxy.js.
+    //
+    // Google Maps is only used here for the Geocoding *web service* (the
+    // map itself is Leaflet/OpenStreetMap, no key needed), which is a
+    // plain REST call -- so it can go through the proxy like everything
+    // else. If a Google Maps JS library is ever added to this app, its key
+    // would have to be public again, and would need HTTP-referrer
+    // restrictions in the Google Cloud Console instead.
+
     // geminiApiKey is intentionally NOT here. It's a service-account-bound
     // key, so committing it to a public GitHub repo gets it auto-revoked by
     // Google's abuse scanner (this happened once already). Instead it's

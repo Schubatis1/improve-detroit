@@ -37,7 +37,7 @@
          file -- bump it (matching APP_VERSION below) whenever config.js or
          this file changes, so a browser that loaded the page just before a
          deploy doesn't keep running stale config after a normal refresh. -->
-    <script src="config.js?v=3.40.0"></script>
+    <script src="config.js?v=3.46.0"></script>
     <!-- Firebase (compat build, so it works as a plain global like the rest
          of this no-build page) -- syncs submission history to Firestore. -->
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -516,9 +516,11 @@
          Doesn't touch Firestore, SeeClickFix, or any report/complaint --
          just two direct browser fetches to Esri's own REST API
          (services2.arcgis.com), which sends Access-Control-Allow-Origin: *
-         (verified directly), so unlike SeeClickFix/Plate Recognizer/
-         MailStream this never needs to route through /api/proxy. See
-         queryArcgisNear/geocodeAddress below.
+         (verified directly) and needs no API key, so unlike SeeClickFix/
+         Plate Recognizer/MailStream this never needs to route through
+         /api/proxy. See queryArcgisNear below. (The address-typed path also
+         calls geocodeAddress, which does go through the proxy -- Google
+         geocoding needs a key.)
 
          This is a quick first look, not proof of compliance: a permit
          found nearby doesn't confirm it's the one covering what you're
@@ -1089,13 +1091,17 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.45.2';
+        const APP_VERSION = '3.46.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.46.0', date: '2026-09-03', notes: [
+                'Fixed: after cancelling a letter, sending it again now actually mails it. Before, it looked like it sent -- preview, send date and all -- but nothing was ever printed.',
+                'The app\'s API keys moved off your phone and onto the server, so they\'re no longer sitting in a file anyone could read.',
+            ] },
             { version: '3.45.2', date: '2026-08-27', notes: [
                 'Reverted Legal Resources back to its original wording.',
             ] },
@@ -1509,6 +1515,33 @@
         document.getElementById('signOutBtn').addEventListener('click', () => {
             firebaseAuth.signOut();
         });
+
+        // Every call that needs an upstream API credential (SeeClickFix,
+        // Plate Recognizer, Google Maps geocoding) goes through this.
+        //
+        // The credentials themselves are NOT here any more -- they used to
+        // sit in config.js, which is committed to a public repo and served
+        // verbatim to anyone who loads the deployed site, so the
+        // SeeClickFix token in particular (it can file real tickets with
+        // the City under this account) was readable by the whole internet.
+        // They're now Vercel environment variables that only api/proxy.js
+        // can see; it injects the right one per target host. All this side
+        // has to do is prove who's calling, which it does with the signed-in
+        // user's Firebase ID token -- the same identity the Firestore rules
+        // already gate on. The proxy rejects anything else, so the
+        // credentials can't be spent by a stranger hitting /api/proxy
+        // directly either.
+        async function proxyFetch(targetUrl, init = {}) {
+            const user = firebaseAuth.currentUser;
+            if (!user) throw new Error('Not signed in -- cannot reach the API proxy.');
+            // Firebase refreshes this automatically when it's close to
+            // expiring, so a long-lived tab doesn't start 401ing mid-session.
+            const idToken = await user.getIdToken();
+            return fetch(`/api/proxy?url=${encodeURIComponent(targetUrl)}`, {
+                ...init,
+                headers: { ...(init.headers || {}), 'Authorization': `Bearer ${idToken}` },
+            });
+        }
 
         function distanceMeters(lat1, lng1, lat2, lng2) {
             const R = 6371000;
@@ -2040,9 +2073,10 @@
         // Permit Lookup screen (hamburger menu) -- see the #permitLookupScreen
         // comment above for what this is and its limits. Both FeatureServers
         // below send Access-Control-Allow-Origin: * (verified directly
-        // against services2.arcgis.com), so these are called straight from
-        // the browser like the Google/Leaflet calls elsewhere in this file,
-        // not routed through /api/proxy.
+        // against services2.arcgis.com) and need no API key, so these are
+        // called straight from the browser (like the keyless Leaflet/OSM
+        // tiles), not routed through /api/proxy. Anything that does carry a
+        // credential goes through proxyFetch instead -- see its comment.
         const PERMIT_LOOKUP_RADIUS_METERS = 200;
         const ROW_PERMITS_QUERY_URL = 'https://services2.arcgis.com/qvkbeam7Wirps6zC/arcgis/rest/services/detroit_right_of_way_permits/FeatureServer/5/query';
         const BUILDING_PERMITS_QUERY_URL = 'https://services2.arcgis.com/qvkbeam7Wirps6zC/arcgis/rest/services/bseed_building_permits/FeatureServer/0/query';
@@ -2113,8 +2147,8 @@
         }
 
         async function geocodeAddress(address) {
-            const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(`${address}, Detroit, MI`)}&key=${CONFIG.googleMapsApiKey}`;
-            const response = await fetch(url);
+            const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(`${address}, Detroit, MI`)}`;
+            const response = await proxyFetch(url);
             if (!response.ok) throw new Error(`Geocoding failed: ${response.status}`);
             const data = await response.json();
             if (data.status !== 'OK' || !data.results?.[0]) throw new Error(`Address not found (${data.status})`);
@@ -2672,10 +2706,7 @@
             try {
                 logToConsole(`Fetching question schema for request type ${requestTypeId}...`);
                 const targetUrl = `https://seeclickfix.com/api/v2/request_types/${requestTypeId}`;
-                const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
-                const response = await fetch(proxyUrl, {
-                    headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` }
-                });
+                const response = await proxyFetch(targetUrl);
                 if (!response.ok) {
                     throw new Error(`Schema fetch failed: ${response.status}`);
                 }
@@ -2975,8 +3006,8 @@
         // submitting an empty required field.
         async function getCrossStreets(lat, lng) {
             try {
-                const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&result_type=intersection&key=${CONFIG.googleMapsApiKey}`;
-                const res = await fetch(url);
+                const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&result_type=intersection`;
+                const res = await proxyFetch(url);
                 if (!res.ok) return null;
                 const data = await res.json();
                 if (data.status === 'OK' && data.results.length > 0) {
@@ -3013,8 +3044,8 @@
                 logToConsole(`[${item.file.name}] Timestamp generated: ${photoTimeString}`);
 
                 logToConsole(`[${item.file.name}] Fetching address lookup from Google Maps...`);
-                const geoUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${item.lat},${item.lng}&key=${CONFIG.googleMapsApiKey}`;
-                const geoRes = await fetch(geoUrl);
+                const geoUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${item.lat},${item.lng}`;
+                const geoRes = await proxyFetch(geoUrl);
                 if (!geoRes.ok) {
                     throw new Error(`Google Maps API HTTP Error: ${geoRes.status}`);
                 }
@@ -3558,7 +3589,6 @@
                 // for the SeeClickFix calls (including its own multipart image
                 // upload), which is known to handle binary POST bodies fine.
                 const targetUrl = 'https://api.platerecognizer.com/v1/plate-reader/';
-                const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
 
                 // A batch upload fires every photo's lookup at once, which
                 // routinely trips Plate Recognizer's per-second rate limit
@@ -3568,9 +3598,8 @@
                 const maxAttempts = 4;
                 let response;
                 for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                    response = await fetch(proxyUrl, {
+                    response = await proxyFetch(targetUrl, {
                         method: 'POST',
-                        headers: { 'Authorization': `Token ${CONFIG.plateRecognizerApiKey}` },
                         body: formData
                     });
 
@@ -3924,11 +3953,8 @@
                     try {
                         logToConsole(`[${item.file.name}] Dispatching POST request via CORS proxy${attempt > 1 ? ` (attempt ${attempt}/${SCF_MAX_ATTEMPTS})` : ''}...`);
                         const targetUrl = 'https://seeclickfix.com/api/v2/issues';
-                        const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
-
-                        const response = await fetch(proxyUrl, {
+                        const response = await proxyFetch(targetUrl, {
                             method: 'POST',
-                            headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` },
                             body: formData
                         });
 
@@ -6034,10 +6060,7 @@
         // callers decide what "couldn't check this one" means for them.
         async function fetchIssueStatus(issueId) {
             const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}`;
-            const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
-            const response = await fetch(proxyUrl, {
-                headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` }
-            });
+            const response = await proxyFetch(targetUrl);
             if (!response.ok) {
                 throw new Error(`Status check failed: ${response.status}`);
             }
@@ -6160,15 +6183,12 @@
         // function -- see api/proxy.js.)
         async function fetchIssueCommentsPage(issueId, page = 1, perPage = 100) {
             const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}/comments?page=${page}&per_page=${perPage}`;
-            const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
             const maxAttempts = 4;
             let response;
             let lastErr;
             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
                 try {
-                    response = await fetch(proxyUrl, {
-                        headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` }
-                    });
+                    response = await proxyFetch(targetUrl);
                     lastErr = null;
                 } catch (err) {
                     lastErr = err; // network-level failure (e.g. "Load failed") -- treat as retryable too
@@ -6309,18 +6329,14 @@
         // transient, so it still fails immediately without wasting retries.
         async function postIssueComment(issueId, commentText) {
             const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}/comments`;
-            const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
             const maxAttempts = 4;
             let response;
             let lastErr;
             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
                 try {
-                    response = await fetch(proxyUrl, {
+                    response = await proxyFetch(targetUrl, {
                         method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${CONFIG.seeClickFix.token}`,
-                            'Content-Type': 'application/json',
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ comment: commentText }),
                     });
                     lastErr = null;
@@ -6349,13 +6365,20 @@
         // The captured traffic sent no auth header here at all, so none is
         // sent here either -- unverified against this app's own Bearer
         // token, but consistent with what was actually observed working.
+        // X-Upstream-Anonymous keeps that true now that the proxy would
+        // otherwise attach the SeeClickFix token to every seeclickfix.com
+        // request (see api/proxy.js) -- this endpoint keeps going out
+        // unauthenticated, exactly as before.
         async function uploadTransientFile(file, fileName) {
             const targetUrl = 'https://seeclickfix.com/scf/v1/transient_files';
-            const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
             const formData = new FormData();
             formData.append('Content-Type', file.type);
             formData.append('file', file, fileName);
-            const response = await fetch(proxyUrl, { method: 'POST', body: formData });
+            const response = await proxyFetch(targetUrl, {
+                method: 'POST',
+                headers: { 'X-Upstream-Anonymous': '1' },
+                body: formData,
+            });
             if (!response.ok) {
                 const errText = await response.text();
                 throw new Error(`Photo upload failed (${response.status}): ${errText}`);
@@ -6374,17 +6397,13 @@
         // Parking Dept" comment above postIssueComment).
         async function postIssueCommentWithPhotos(issueId, commentText, photoLocationUrls) {
             const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}/comments`;
-            const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
             const body = { comment: commentText ?? null };
             photoLocationUrls.forEach((url, i) => {
                 body[i === 0 ? 'image' : `image${i}`] = url;
             });
-            const response = await fetch(proxyUrl, {
+            const response = await proxyFetch(targetUrl, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${CONFIG.seeClickFix.token}`,
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
             if (!response.ok) {
@@ -6500,15 +6519,12 @@
         // retry 429/network failures with backoff for the same reason.
         async function fetchIssueRequestTypeId(issueId) {
             const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}`;
-            const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
             const maxAttempts = 4;
             let response;
             let lastErr;
             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
                 try {
-                    response = await fetch(proxyUrl, {
-                        headers: { 'Authorization': `Bearer ${CONFIG.seeClickFix.token}` }
-                    });
+                    response = await proxyFetch(targetUrl);
                     lastErr = null;
                 } catch (err) {
                     lastErr = err;
@@ -7313,6 +7329,21 @@
         // multi-page-worth-of-HTML letter is handled or silently
         // truncated/rejected (the docs only guarantee multi-page for PDF
         // artwork).
+        // MailStream is the one upstream whose key this app still holds
+        // client-side -- unavoidably, since the normal path is a direct
+        // browser call (that API does send CORS headers) and only the
+        // fallback goes through the proxy. On that fallback path the
+        // Authorization header belongs to proxyFetch (it carries the
+        // Firebase ID token that authorizes the proxy call itself), so the
+        // MailStream key moves to X-Upstream-Authorization, which
+        // api/proxy.js forwards upstream as Authorization. Keeping the two
+        // in separate headers is what stops the proxy from ever mistaking
+        // one for the other.
+        function mailStreamHeadersForProxy(headers) {
+            const { Authorization, ...rest } = headers;
+            return { ...rest, 'X-Upstream-Authorization': Authorization };
+        }
+
         async function postMailStreamLetter(body, idempotencyKey) {
             const targetUrl = 'https://my.mailstream.app/api/v1/letters';
             const headers = {
@@ -7327,8 +7358,11 @@
                 return response.json();
             } catch (directErr) {
                 logToConsole(`Direct MailStream request failed -- retrying via the same CORS proxy used for SeeClickFix, though this API allows direct browser calls so this is likely a transient network issue rather than a CORS block: ${directErr instanceof Error ? directErr.message : directErr}`, true);
-                const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
-                const response = await fetch(proxyUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+                const response = await proxyFetch(targetUrl, {
+                    method: 'POST',
+                    headers: mailStreamHeadersForProxy(headers),
+                    body: JSON.stringify(body),
+                });
                 if (!response.ok) throw new Error(`MailStream API error via proxy (${response.status}): ${await response.text()}`);
                 return response.json();
             }
@@ -7354,8 +7388,7 @@
                 return response.json();
             } catch (directErr) {
                 logToConsole(`Direct MailStream cancel request failed -- retrying via CORS proxy: ${directErr instanceof Error ? directErr.message : directErr}`, true);
-                const proxyUrl = `/api/proxy?url=${encodeURIComponent(targetUrl)}`;
-                const response = await fetch(proxyUrl, { method: 'POST', headers });
+                const response = await proxyFetch(targetUrl, { method: 'POST', headers: mailStreamHeadersForProxy(headers) });
                 if (!response.ok) throw new Error(`MailStream cancel error via proxy (${response.status}): ${await response.text()}`);
                 return response.json();
             }
@@ -7418,6 +7451,19 @@
                 await letterRef.update({
                     mailStreamStatus: 'cancelled',
                     mailStreamCancelledAt: new Date().toISOString(),
+                    // Cleared so a later re-send is a genuinely NEW send.
+                    // An idempotency key means "if you've seen this key,
+                    // replay the original result instead of doing the work
+                    // again" -- so re-sending with the cancelled letter's
+                    // key made MailStream hand back the cancelled letter
+                    // and print nothing, while this app recorded it as
+                    // 'sent' and showed a preview and a send date. The UI
+                    // offers "Send via MailStream" again after a cancel
+                    // (see canSendViaMailStream / renderMailStreamResult),
+                    // so that path was reachable and silently mailed
+                    // nothing. sendParkingDeptLetterViaMailStream mints a
+                    // fresh key whenever this field is absent.
+                    mailStreamIdempotencyKey: firebase.firestore.FieldValue.delete(),
                 });
                 logToConsole(`Cancelled letter ${letterId}'s MailStream send (${result.cancelledMailables} mailable(s) cancelled).`);
             } catch (err) {
@@ -7475,8 +7521,17 @@
             // true server-side dedupe (MailStream honors Idempotency-Key),
             // stronger than the in-session-only Set used for SeeClickFix
             // comments above.
-            const idempotencyKey = letter.mailStreamIdempotencyKey || crypto.randomUUID();
-            if (!letter.mailStreamIdempotencyKey) {
+            //
+            // A cancelled letter always gets a fresh key: reusing the
+            // cancelled send's key would make MailStream replay that send
+            // and print nothing (see cancelParkingDeptLetterMailStreamSend,
+            // which clears the field for this reason). Re-checked here
+            // rather than relying only on that write, so a stale
+            // parkingDeptLettersCache entry -- e.g. if the refresh after a
+            // cancel failed -- can't quietly resurrect the old key.
+            const reusableKey = letter.mailStreamStatus === 'cancelled' ? null : letter.mailStreamIdempotencyKey;
+            const idempotencyKey = reusableKey || crypto.randomUUID();
+            if (!reusableKey) {
                 await letterRef.update({ mailStreamIdempotencyKey: idempotencyKey });
             }
 
