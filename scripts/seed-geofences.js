@@ -9,9 +9,10 @@
  *
  * Re-running this script overwrites (via merge) only the ids below -- it
  * will NOT touch or delete any geofence you've since added/edited from the
- * app. If you've already edited "gar-building", "times-square", or
- * "little-caesars-arena" from the app, re-running this script will stomp
- * those edits back to the defaults below -- check before re-running.
+ * app. If you've already edited "gar-building", "times-square",
+ * "little-caesars-arena", or "basils-party-store" from the app, re-running
+ * this script will stomp those edits back to the defaults below -- check
+ * before re-running.
  *
  * Requires a Firebase service account key JSON (Firebase console ->
  * Project settings -> Service accounts -> Generate new private key).
@@ -96,6 +97,24 @@ const GEOFENCES = [
         // Only active after 4pm, every day -- endHour null = runs to end of day.
         daysOfWeek: [],
         startHour: 16,
+        endHour: null,
+        detectRepeatOffenders: true,
+        reportRepeatOffenders: true,
+        detectRepeatIncidents: true,
+        reportRepeatIncidents: true,
+    },
+    {
+        id: 'basils-party-store',
+        name: "Basil's Party Store (Grand River)",
+        lat: 42.3464134,
+        lng: -83.0838794,
+        radiusMeters: 40,
+        message: "Vehicle illegally parked at Basil's Party Store, 4515 Grand River Ave. Please note this is a recurring incident. Please see previous {{PRIOR_COMPLAINTS}}.",
+        bluCategory: 'Private Owner Vehicle',
+        improveDetroitCategory: '',
+        // 24/7 -- no day/hour restriction.
+        daysOfWeek: [],
+        startHour: null,
         endHour: null,
         detectRepeatOffenders: true,
         reportRepeatOffenders: true,
