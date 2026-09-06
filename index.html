@@ -4975,6 +4975,20 @@
                     URL.revokeObjectURL(img.src);
                     resolve(canvas.toDataURL('image/jpeg', 0.6));
                 };
+                // Without this, a blob the <img> can't decode (a transient
+                // network blip fetching the object URL, a corrupt/unsupported
+                // file) leaves this promise pending forever -- and since
+                // addToHistory awaits it before ever reaching its own
+                // try/catch (let alone the Firestore write), the whole
+                // history entry silently never gets written, with nothing
+                // logged anywhere to explain why. A missing thumbnail is a
+                // cosmetic loss (the <img> tags just render broken); losing
+                // the entire durable record is not, so resolve with null
+                // instead of leaving callers hanging.
+                img.onerror = () => {
+                    URL.revokeObjectURL(img.src);
+                    resolve(null);
+                };
                 img.src = URL.createObjectURL(file);
             });
         }
@@ -5004,6 +5018,9 @@
         async function addToHistory(item, issueId, address, opts = {}) {
             const suppressed = !!opts.suppressed;
             const thumbnail = await makeThumbnail(item.file);
+            if (!thumbnail) {
+                logToConsole(`[${item.file.name}] Could not generate a thumbnail for #${issueId} -- continuing without one so the history entry itself still gets saved.`, true);
+            }
             const plateIds = parsePlateIds(item.els.plate.value);
             const usdotIds = parseUsdotIds(item.els.usdot.value);
             // USDOT is the primary commercial-carrier join key; company
