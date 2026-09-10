@@ -61,7 +61,11 @@ async function main() {
     console.log(`Done. Tagged ${tagged}/${issueIds.length} issue(s).`);
 }
 
-main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-});
+if (require.main === module) {
+    main().catch((err) => {
+        console.error(err);
+        process.exit(1);
+    });
+}
+
+module.exports = { parseArgs };

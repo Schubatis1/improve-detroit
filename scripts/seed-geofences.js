@@ -127,7 +127,11 @@ async function main() {
     console.log(`Done. Seeded ${GEOFENCES.length} geofence(s).`);
 }
 
-main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-});
+if (require.main === module) {
+    main().catch((err) => {
+        console.error(err);
+        process.exit(1);
+    });
+}
+
+module.exports = { parseArgs, GEOFENCES };
