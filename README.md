@@ -45,22 +45,56 @@ above, and revoke the old one.
 
 - `npm test` -- runs the unit tests (`test/*.test.js`, via [Vitest](https://vitest.dev)):
   pure logic extracted into `lib/*.js` (geofence math, day/time windows,
-  plate/company/USDOT normalization, HTML escaping, permit dedup/sorting),
-  `api/proxy.js`'s auth/host-allowlist/credential-injection behavior (mocked
-  Firebase Admin + `fetch`, no real network or project needed), and the pure
-  helpers inside `scripts/*.js`. Runs in CI on every push/PR.
-- `npm run test:rules` -- runs `test/firestore.rules.test.js` and
-  `test/storage.rules.test.js` against the Firebase emulator (via
-  `firebase emulators:exec`), asserting the actual owner-only access control
-  firestore.rules/storage.rules enforce. Needs a JDK on PATH (the emulator
+  plate/company/USDOT normalization, HTML escaping, permit dedup/sorting,
+  workflow/plate-rule resolution, history filtering), `api/proxy.js`'s
+  auth/host-allowlist/credential-injection behavior (mocked Firebase Admin +
+  `fetch`, no real network or project needed), and the pure helpers inside
+  `scripts/*.js`. Runs in CI on every push/PR.
+- `npm run test:coverage` -- the same suite with a line-coverage report
+  (text + `coverage/index.html`), scoped to `lib/`, `api/`, and `scripts/`
+  (index.html's own inline app script and the Playwright-driven parts of
+  `scripts/*.js` are intentionally out of scope for line coverage -- see
+  `test/e2e/golden-path.js` and the rules tests for how those are covered
+  instead).
+- `npm run test:rules` -- runs `test/firestore.rules.test.js`,
+  `test/storage.rules.test.js`, and `test/scripts.integration.test.js`
+  against the Firebase emulator (via `firebase emulators:exec`): the rules
+  tests assert the actual owner-only access control
+  firestore.rules/storage.rules enforce; the integration tests exercise
+  each `scripts/*.js`'s actual Firestore-writing logic (`backfillPlates`,
+  `seedGeofences`, `tagGeofenceOnIssues`, `importIssues`) against the
+  emulator via the real `firebase-admin` SDK, which -- like these scripts in
+  production -- always bypasses `firestore.rules`, so no service
+  account/Auth emulator is needed. Needs a JDK on PATH (the emulator
   requires Java); also runs in CI.
+- `npm run test:e2e` -- a Playwright smoke test
+  (`test/e2e/golden-path.js`) driving the real, unmodified `index.html` in
+  headless Chromium: loads, signs in (stubbed Firebase Auth), switches
+  tabs, and selects a photo -- asserting it reaches `addQueueItem`/
+  `mountItemCard` the way v3.15.1's fix confirmed it should (that exact
+  path silently broke in production once). The CDN hosts the app depends
+  on (Firebase, Leaflet, exifr, Tailwind) are stubbed with minimal fakes
+  via `page.route()`, since this sandbox's (and possibly your CI runner's)
+  network policy may not reach them; everything else -- the real
+  `index.html`/`lib/*.js` -- runs unmodified. Deliberately scoped to a
+  smoke test, not a full submission round-trip: it does not exercise
+  `processQueueItem`'s async Gemini/Plate Recognizer/geocoding chain, which
+  would need a much larger stub surface for comparatively little
+  regression-catching value over the unit tests already covering that
+  logic's pure pieces. Needs Playwright's Chromium installed
+  (`npx playwright install chromium`, or the CI step that does the same);
+  also runs in CI.
 
 `lib/*.js` is loaded by `index.html` as plain `<script src="lib/...">` tags
 (same as before this code was pulled out of the inline app script) so there's
 still no build step -- it's also `require()`-able from Node, which is what
 makes it unit-testable and lets `scripts/backfill-plates.js` share
 `lib/identity.js`'s plate normalization with the live app instead of keeping
-its own copy that could quietly drift out of sync.
+its own copy that could quietly drift out of sync. A few of these
+(`resolveWorkflow`, `findPlateRule`, `applyHistoryFilters`) originally read
+app-global state (`CONFIG`, `geofencesCache`, `historyFilters`) directly;
+they now take that state as explicit parameters instead, purely so they're
+testable -- their behavior is unchanged, see each call site in `index.html`.
 
 ## Scripts
 

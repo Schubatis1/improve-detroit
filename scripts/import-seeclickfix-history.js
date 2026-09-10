@@ -68,6 +68,31 @@ function toHistoryEntry(issue) {
     };
 }
 
+// Split out from main() so it's testable against the Firestore emulator
+// without a real service account/Auth -- see test/scripts.integration.test.js.
+async function importIssues(db, uid, issues) {
+    const collection = db.collection('users').doc(uid).collection('history');
+
+    let batch = db.batch();
+    let opsInBatch = 0;
+    let written = 0;
+    for (const issue of issues) {
+        const docRef = collection.doc(String(issue.id));
+        batch.set(docRef, toHistoryEntry(issue), { merge: true });
+        opsInBatch++;
+        written++;
+        if (opsInBatch === 450) {
+            await batch.commit();
+            batch = db.batch();
+            opsInBatch = 0;
+        }
+    }
+    if (opsInBatch > 0) await batch.commit();
+
+    console.log(`Wrote ${written} history entries to users/${uid}/history`);
+    return { written };
+}
+
 async function main() {
     const args = parseArgs(process.argv.slice(2));
     if (!args.har || !args['service-account']) {
@@ -88,25 +113,7 @@ async function main() {
     console.log(`Found ${issues.length} unique issues in ${harPath}`);
 
     const db = admin.firestore();
-    const collection = db.collection('users').doc(user.uid).collection('history');
-
-    let batch = db.batch();
-    let opsInBatch = 0;
-    let written = 0;
-    for (const issue of issues) {
-        const docRef = collection.doc(String(issue.id));
-        batch.set(docRef, toHistoryEntry(issue), { merge: true });
-        opsInBatch++;
-        written++;
-        if (opsInBatch === 450) {
-            await batch.commit();
-            batch = db.batch();
-            opsInBatch = 0;
-        }
-    }
-    if (opsInBatch > 0) await batch.commit();
-
-    console.log(`Wrote ${written} history entries to users/${user.uid}/history`);
+    await importIssues(db, user.uid, issues);
 }
 
 if (require.main === module) {
@@ -116,4 +123,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseArgs, readHarJson, loadIssuesFromHar, toHistoryEntry };
+module.exports = { parseArgs, readHarJson, loadIssuesFromHar, toHistoryEntry, importIssues };

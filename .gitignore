@@ -11,3 +11,6 @@ scripts/dry-run/
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
+
+# npm run test:coverage
+coverage/
