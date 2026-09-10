@@ -1084,6 +1084,15 @@
     </div>
     </div> <!-- #appContent -->
 
+    <!-- Pure logic extracted out of the inline app script below so it's
+         unit-testable (see test/*.test.js) without a DOM or app state --
+         each file defines plain globals here, same as before extraction. -->
+    <script src="lib/geo.js?v=3.46.1"></script>
+    <script src="lib/identity.js?v=3.46.1"></script>
+    <script src="lib/format.js?v=3.46.1"></script>
+    <script src="lib/permits.js?v=3.46.1"></script>
+    <script src="lib/history.js?v=3.46.1"></script>
+
     <script>
         // ==========================================
         // CONFIGURATION
@@ -1549,122 +1558,12 @@
             });
         }
 
-        function distanceMeters(lat1, lng1, lat2, lng2) {
-            const R = 6371000;
-            const toRad = (deg) => (deg * Math.PI) / 180;
-            const dLat = toRad(lat2 - lat1);
-            const dLng = toRad(lng2 - lng1);
-            const a = Math.sin(dLat / 2) ** 2 +
-                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        }
-
-        // Ray-casting point-in-polygon test (even-odd rule). `polygon` is an
-        // ordered array of {lat, lng} vertices -- the last vertex connects
-        // back to the first implicitly, so callers don't need to repeat it.
-        // Good enough for the small, city-block-scale shapes geofences use;
-        // doesn't need to account for antimeridian wraparound or geodesic
-        // curvature at this scale.
-        function pointInPolygon(lat, lng, polygon) {
-            let inside = false;
-            for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-                const a = polygon[i], b = polygon[j];
-                const crosses = (a.lat > lat) !== (b.lat > lat)
-                    && lng < (b.lng - a.lng) * (lat - a.lat) / (b.lat - a.lat) + a.lng;
-                if (crosses) inside = !inside;
-            }
-            return inside;
-        }
-
-        function polygonCentroid(polygon) {
-            return {
-                lat: polygon.reduce((sum, p) => sum + p.lat, 0) / polygon.length,
-                lng: polygon.reduce((sum, p) => sum + p.lng, 0) / polygon.length,
-            };
-        }
-
-        // Whether (lat, lng) falls inside a geofence's shape. Geofences with
-        // 3+ points in `polygon` use a true point-in-polygon test; every
-        // other geofence (the original/default shape) falls back to the
-        // classic center point + radiusMeters circle. lat/lng on a polygon
-        // geofence still holds its centroid (see saveGeofenceForm), just for
-        // map centering/list display -- matching itself uses the polygon.
-        function geofenceContainsPoint(geofence, lat, lng) {
-            if (Array.isArray(geofence.polygon) && geofence.polygon.length >= 3) {
-                return pointInPolygon(lat, lng, geofence.polygon);
-            }
-            return distanceMeters(lat, lng, geofence.lat, geofence.lng) <= geofence.radiusMeters;
-        }
-
-        // Turns a workflow's priorComplaintIds (e.g. for a recurring-offender
-        // geofence) into a phrase like "issue #123" or "issues #123, #456,
-        // and #789" for the {{PRIOR_COMPLAINTS}} placeholder below.
-        function formatPriorComplaints(ids) {
-            if (!ids || ids.length === 0) return 'incidents at this location';
-            if (ids.length === 1) return `issue #${ids[0]}`;
-            const numbered = ids.map((id) => `#${id}`);
-            const last = numbered.pop();
-            return `issues ${numbered.join(', ')}${ids.length > 2 ? ',' : ''} and ${last}`;
-        }
-
-        // Picks one random template from a workflow's description pool and
-        // fills in the resolved address and (if the workflow defines any)
-        // prior-complaint issue numbers.
-        function pickRandomDescription(workflow, address) {
-            const template = workflow.descriptions[Math.floor(Math.random() * workflow.descriptions.length)];
-            return template
-                .replace(/\{\{ADDRESS\}\}/g, address)
-                .replace(/\{\{PRIOR_COMPLAINTS\}\}/g, formatPriorComplaints(workflow.priorComplaintIds));
-        }
-
-        // Whether a geofence document is "active" (per its daysOfWeek/
-        // startHour/endHour fields, all optional) at a given Date, in
-        // Detroit local time -- `when` should be the photo's own
-        // capture time (item.photoDateObj), not upload time, since a
-        // "Sexy Steak Geofence should be active after 2pm" rule is about
-        // when the obstruction was photographed, not when it was uploaded.
-        // daysOfWeek empty/absent = every day. startHour/endHour both
-        // null/absent = 24 hours. Only one of startHour/endHour set means
-        // "from startHour to end of day" or "from start of day to endHour".
-        // startHour > endHour is treated as an overnight window (e.g. 22-2).
-        function geofenceActiveAt(geofence, when) {
-            const parts = new Intl.DateTimeFormat('en-US', {
-                timeZone: 'America/Detroit', weekday: 'short', hour: 'numeric', hour12: false,
-            }).formatToParts(when);
-            const weekdayAbbr = parts.find((p) => p.type === 'weekday').value;
-            const dayIndex = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(weekdayAbbr);
-            const hour = Number(parts.find((p) => p.type === 'hour').value) % 24;
-
-            const days = geofence.daysOfWeek;
-            if (Array.isArray(days) && days.length > 0 && !days.includes(dayIndex)) return false;
-
-            const start = geofence.startHour;
-            const end = geofence.endHour;
-            if (start == null && end == null) return true;
-            if (start != null && end == null) return hour >= start;
-            if (start == null && end != null) return hour < end;
-            return start <= end ? (hour >= start && hour < end) : (hour >= start || hour < end);
-        }
-
-        // Bike Lane Uprising's "Metro City" dropdown option labels, copied
-        // verbatim from the live form (see scripts/submit-to-blu.js's
-        // PLATE_STATE_*/METRO_CITY_DETROIT comment) -- must match exactly.
-        const METRO_CITY_DETROIT = 'Detroit - MI';
-        const METRO_CITY_NEW_YORK = 'New York - NY';
-
-        // Rough bounding box covering all five NYC boroughs, generously
-        // padded -- good enough to tell "this photo was taken on a work
-        // trip to New York" from "this is Detroit", without needing a
-        // reverse-geocode round trip just to pick a metro city.
-        const NEW_YORK_CITY_BOUNDS = { minLat: 40.47, maxLat: 40.92, minLng: -74.26, maxLng: -73.68 };
-
-        function resolveMetroCity(lat, lng) {
-            const b = NEW_YORK_CITY_BOUNDS;
-            if (lat >= b.minLat && lat <= b.maxLat && lng >= b.minLng && lng <= b.maxLng) {
-                return METRO_CITY_NEW_YORK;
-            }
-            return METRO_CITY_DETROIT;
-        }
+        // distanceMeters/pointInPolygon/polygonCentroid/geofenceContainsPoint/
+        // geofenceActiveAt/resolveMetroCity (+ METRO_CITY_*/NEW_YORK_CITY_BOUNDS)
+        // and formatPriorComplaints/pickRandomDescription now live in
+        // lib/geo.js and lib/format.js (loaded as plain globals above,
+        // same as before this extraction) so they're unit-testable without
+        // a DOM -- see test/geo.test.js, test/format.test.js.
 
         // Finds the first configured geofence (if any) containing (lat, lng)
         // that is also currently active (see geofenceActiveAt), and merges
@@ -1737,71 +1636,12 @@
             if (item.natureValues) item.els.nature.value = pickNatureValue(item.natureValues, workflow);
         }
 
-        // Normalizes a detected plate for matching against config.plateRules.
-        function normalizePlate(plate) {
-            return String(plate || '').toUpperCase().replace(/\s+/g, '');
-        }
-
-        // Normalizes a detected company/business name for matching -- free
-        // text, so this only collapses trivial formatting differences
-        // (case, punctuation, extra whitespace). Deliberately does NOT
-        // strip common suffixes (LLC/INC/CORP/CO) -- that would catch more
-        // real matches but also risks merging two different companies that
-        // happen to share a base name, and USDOT (not company name) is the
-        // primary join key here (see usdotNumbersCollection), so this
-        // fallback favors precision over recall.
-        function normalizeCompanyName(name) {
-            return String(name || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
-        }
-
-        // Sanitizes a normalized company name into a safe Firestore document
-        // id, mirroring plateDocId below.
-        function companyDocId(name) {
-            return normalizeCompanyName(name).replace(/\s+/g, '-');
-        }
-
-        // USDOT numbers are purely numeric placard ids -- strip everything
-        // else so formatting variants ("USDOT 123456", "US DOT#123456")
-        // all resolve to the same doc id.
-        function normalizeUsdot(usdot) {
-            return String(usdot || '').replace(/\D+/g, '');
-        }
-
-        // Sanitizes a normalized USDOT number into a safe Firestore document
-        // id. Already digits-only after normalizeUsdot, so this is a no-op
-        // today, but mirrors plateDocId/companyDocId for consistency.
-        function usdotDocId(usdot) {
-            return normalizeUsdot(usdot);
-        }
-
-        // Splits a comma-joined field (possibly merged by combineReports)
-        // into individual normalized ids, deduped -- shared by
-        // parseCompanyIds/parseUsdotIds below.
-        function dedupeByNormalizedId(rawValues, idFn) {
-            const seen = new Set();
-            const result = [];
-            for (const raw of rawValues) {
-                const trimmed = String(raw || '').trim();
-                if (!trimmed) continue;
-                const id = idFn(trimmed);
-                if (!id || seen.has(id)) continue;
-                seen.add(id);
-                result.push(trimmed);
-            }
-            return result;
-        }
-
-        // Splits a submission's raw company field into individual company
-        // doc ids, deduped. Mirrors parsePlateIds.
-        function parseCompanyIds(rawCompany) {
-            return [...new Set(String(rawCompany || '').split(',').map(companyDocId).filter(Boolean))];
-        }
-
-        // Splits a submission's raw USDOT field into individual USDOT doc
-        // ids, deduped. Mirrors parsePlateIds.
-        function parseUsdotIds(rawUsdot) {
-            return [...new Set(String(rawUsdot || '').split(',').map(usdotDocId).filter(Boolean))];
-        }
+        // normalizePlate/normalizeCompanyName/companyDocId/normalizeUsdot/
+        // usdotDocId/dedupeByNormalizedId/parseCompanyIds/parseUsdotIds/
+        // plateDocId/parsePlateIds now live in lib/identity.js (loaded as
+        // plain globals above, same as before this extraction; also used
+        // by scripts/backfill-plates.js so both stay in sync) -- see
+        // test/identity.test.js.
 
         // Finds the first plate rule (if any) matching a detected plate.
         function findPlateRule(plate) {
@@ -1821,11 +1661,8 @@
         // not free text, so answers must come from SeeClickFix's own schema.
         const NATURE_FALLBACK_VALUES = [{ key: ' Car traveling in bike lane', name: 'Car traveling in bike lane' }];
 
-        function escapeHtml(str) {
-            const div = document.createElement('div');
-            div.textContent = String(str);
-            return div.innerHTML;
-        }
+        // escapeHtml now lives in lib/format.js (loaded as a plain global
+        // above, same as before this extraction) -- see test/format.test.js.
 
         // Custom Logger to pipe info to the UI
         function logToConsole(message, isError = false) {
@@ -2169,42 +2006,10 @@
         // date field (e.g. permit_issued_date, which is sometimes null)
         // still sorts sensibly instead of landing wherever the server puts
         // nulls. A permit missing every field in the list sorts last.
-        function permitSortDate(feature, dateFields) {
-            for (const field of dateFields) {
-                const value = feature.attributes[field];
-                if (value) return value;
-            }
-            return '';
-        }
-        function sortPermitsNewestFirst(features, dateFields) {
-            return [...features].sort((a, b) => permitSortDate(b, dateFields).localeCompare(permitSortDate(a, dateFields)));
-        }
-
-        // The RoW Points layer has one row per street-segment the permit
-        // touches, not one row per permit -- ENG-23-557 alone comes back as
-        // 3 rows (Henry St, Cass Ave, the alley), all with identical dates/
-        // description. Collapsing to one card per application_id avoids
-        // showing the same permit 2-3 times in a row.
-        function dedupeByField(features, field) {
-            const seen = new Set();
-            return features.filter((feature) => {
-                const key = feature.attributes[field];
-                if (seen.has(key)) return false;
-                seen.add(key);
-                return true;
-            });
-        }
-
-        // "Active" only applies to Right-of-Way permits -- they're the only
-        // dataset here with a defined start/end closure window; BSEED
-        // building permits have no such window (or any status field) in
-        // this feed, so the active-only filter never touches them.
-        function isRowPermitActiveToday(feature) {
-            const { start_date, end_date } = feature.attributes;
-            if (!start_date || !end_date) return false;
-            const today = new Date().toISOString().slice(0, 10);
-            return start_date <= today && today <= end_date;
-        }
+        // permitSortDate/sortPermitsNewestFirst/dedupeByField/
+        // isRowPermitActiveToday now live in lib/permits.js (loaded as
+        // plain globals above, same as before this extraction) -- see
+        // test/permits.test.js.
 
         function renderRowPermitCard(feature) {
             const a = feature.attributes;
@@ -4399,18 +4204,9 @@
         // Parses the gfPolygonPoints textarea (one "lat, lng" pair per
         // line) into a {lat,lng}[] array, silently dropping blank/malformed
         // lines so the map can redraw incrementally while someone's mid-edit.
-        function parsePolygonPointsText(text) {
-            return text.split('\n')
-                .map((line) => line.trim())
-                .filter(Boolean)
-                .map((line) => line.split(',').map((n) => parseFloat(n.trim())))
-                .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng))
-                .map(([lat, lng]) => ({ lat, lng }));
-        }
-
-        function polygonPointsToText(points) {
-            return points.map((p) => `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`).join('\n');
-        }
+        // parsePolygonPointsText/polygonPointsToText now live in
+        // lib/format.js (loaded as plain globals above, same as before
+        // this extraction) -- see test/format.test.js.
 
         function initGeofenceMap(shape, lat, lng, radiusMeters, polygonPoints) {
             if (gfMap) { gfMap.remove(); gfMap = null; }
@@ -4910,22 +4706,9 @@
             }
         }
 
-        // Sanitizes a normalized plate into a safe Firestore document id.
-        // Plates are already alnum after normalizePlate, but this also
-        // strips '/' just in case a hand-typed plate has stray punctuation
-        // -- Firestore forbids '/' within a single path segment.
-        function plateDocId(plate) {
-            return normalizePlate(plate).replace(/\//g, '-');
-        }
-
-        // Splits a submission's raw plate field (a single plate, or several
-        // comma-joined together by combineReports when merging multiple
-        // ready reports into one) into individual plate doc ids, deduped.
-        // Used at write time (addToHistory) to populate both plateIds and
-        // the plates index.
-        function parsePlateIds(rawPlate) {
-            return [...new Set(String(rawPlate || '').split(',').map(plateDocId).filter(Boolean))];
-        }
+        // plateDocId/parsePlateIds now live in lib/identity.js (loaded as
+        // plain globals above, same as before this extraction) -- see
+        // test/identity.test.js.
 
         // A history entry's plates: plateIds on entries written since the
         // plates-index migration, falling back to splitting the (possibly
@@ -5216,35 +4999,9 @@
             }
         }
 
-        // A history entry is locked to further edits once submit-to-blu.js's
-        // scheduled GitHub Action run has already processed it -- i.e. as
-        // soon as bluStatus moves off its initial 'pending' value. That
-        // covers every terminal status the script writes ('submitted',
-        // 'failed') as well as the client-side 'photo-upload-failed' state
-        // (addToHistory) -- none of those mean "still safe to edit before
-        // BLU sees it".
-        function isBluLocked(entry) {
-            return !!entry.bluStatus && entry.bluStatus !== 'pending';
-        }
-
-        // Buckets parkingDeptFlag (+ whether it's ever been checked) into
-        // the 4 categories the Parking Dept Status filter offers:
-        // - 'notDetermined': never checked (parkingDeptLastCheckedAt unset)
-        //   -- Search hasn't reached it yet, and it's never been manually
-        //   checked via "Check Issue" either.
-        // - 'notRequested': checked and no referral found (or manually
-        //   dismissed as a false match) -- determined a notification isn't
-        //   needed.
-        // - 'awaiting': matched (flagged) or a letter's been generated
-        //   (lettered), but not yet marked notified.
-        // - 'notified': done.
-        function parkingDeptStatusCategory(entry) {
-            if (entry.parkingDeptFlag === 'notified') return 'notified';
-            if (entry.parkingDeptFlag === 'flagged' || entry.parkingDeptFlag === 'lettered') return 'awaiting';
-            if (entry.parkingDeptFlag === 'dismissed') return 'notRequested';
-            if (entry.parkingDeptLastCheckedAt) return 'notRequested';
-            return 'notDetermined';
-        }
+        // isBluLocked/parkingDeptStatusCategory now live in lib/history.js
+        // (loaded as plain globals above, same as before this extraction)
+        // -- see test/history.test.js.
 
         // Predicate for the Submission History filters -- every active
         // filter must match (AND, not OR). Date range is inclusive and

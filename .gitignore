@@ -5,3 +5,9 @@ scripts/dry-run/
 
 .vercel
 .env*
+
+# Firebase emulator (npm run test:rules)
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log

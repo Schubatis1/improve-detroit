@@ -39,6 +39,29 @@ git history keeps it even after it's removed from the current files. Generate
 a replacement at the provider, put the new value in the Vercel variable
 above, and revoke the old one.
 
+## Tests
+
+`npm install` then:
+
+- `npm test` -- runs the unit tests (`test/*.test.js`, via [Vitest](https://vitest.dev)):
+  pure logic extracted into `lib/*.js` (geofence math, day/time windows,
+  plate/company/USDOT normalization, HTML escaping, permit dedup/sorting),
+  `api/proxy.js`'s auth/host-allowlist/credential-injection behavior (mocked
+  Firebase Admin + `fetch`, no real network or project needed), and the pure
+  helpers inside `scripts/*.js`. Runs in CI on every push/PR.
+- `npm run test:rules` -- runs `test/firestore.rules.test.js` and
+  `test/storage.rules.test.js` against the Firebase emulator (via
+  `firebase emulators:exec`), asserting the actual owner-only access control
+  firestore.rules/storage.rules enforce. Needs a JDK on PATH (the emulator
+  requires Java); also runs in CI.
+
+`lib/*.js` is loaded by `index.html` as plain `<script src="lib/...">` tags
+(same as before this code was pulled out of the inline app script) so there's
+still no build step -- it's also `require()`-able from Node, which is what
+makes it unit-testable and lets `scripts/backfill-plates.js` share
+`lib/identity.js`'s plate normalization with the live app instead of keeping
+its own copy that could quietly drift out of sync.
+
 ## Scripts
 
 See `package.json`. All of them need a Firebase service account key

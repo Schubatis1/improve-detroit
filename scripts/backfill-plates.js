@@ -10,9 +10,9 @@
  * data as cheap as lookups against new data, and gives the index full
  * historical coverage.
  *
- * plateDocId/parsePlateIds below must stay logically identical to
- * index.html's -- they're duplicated here rather than shared because this
- * runs under Node with firebase-admin, not in the browser.
+ * parsePlateIds comes from lib/identity.js, shared with index.html -- see
+ * that file's comment for why: a drift between this script's normalization
+ * and the live app's would silently mislink history.
  *
  * Requires a Firebase service account key JSON (Firebase console ->
  * Project settings -> Service accounts -> Generate new private key).
@@ -25,6 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const admin = require('firebase-admin');
+const { parsePlateIds } = require('../lib/identity.js');
 
 function parseArgs(argv) {
     const args = { email: 'aschubatis@gmail.com' };
@@ -33,18 +34,6 @@ function parseArgs(argv) {
         args[key] = argv[i + 1];
     }
     return args;
-}
-
-function normalizePlate(plate) {
-    return String(plate || '').toUpperCase().replace(/\s+/g, '');
-}
-
-function plateDocId(plate) {
-    return normalizePlate(plate).replace(/\//g, '-');
-}
-
-function parsePlateIds(rawPlate) {
-    return [...new Set(String(rawPlate || '').split(',').map(plateDocId).filter(Boolean))];
 }
 
 async function main() {
@@ -110,7 +99,11 @@ async function main() {
     console.log(`Upserted ${plateDocsTouched} plate-index write(s)`);
 }
 
-main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-});
+if (require.main === module) {
+    main().catch((err) => {
+        console.error(err);
+        process.exit(1);
+    });
+}
+
+module.exports = { parseArgs };

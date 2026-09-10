@@ -109,7 +109,11 @@ async function main() {
     console.log(`Wrote ${written} history entries to users/${user.uid}/history`);
 }
 
-main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-});
+if (require.main === module) {
+    main().catch((err) => {
+        console.error(err);
+        process.exit(1);
+    });
+}
+
+module.exports = { parseArgs, readHarJson, loadIssuesFromHar, toHistoryEntry };

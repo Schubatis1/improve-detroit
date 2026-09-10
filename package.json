@@ -5,10 +5,19 @@
     "import-history": "node scripts/import-seeclickfix-history.js",
     "submit-to-blu": "node scripts/submit-to-blu.js",
     "backfill-plates": "node scripts/backfill-plates.js",
-    "seed-geofences": "node scripts/seed-geofences.js"
+    "seed-geofences": "node scripts/seed-geofences.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:rules": "firebase emulators:exec --only firestore,storage \"vitest run --config vitest.rules.config.js\""
   },
   "dependencies": {
     "firebase-admin": "^12.6.0",
     "playwright": "^1.47.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4",
+    "firebase-tools": "^13.23.1",
+    "jsdom": "^30.0.1",
+    "vitest": "^2.1.4"
   }
 }
