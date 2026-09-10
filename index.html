@@ -1091,13 +1091,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.46.1';
+        const APP_VERSION = '3.46.2';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.46.2', date: '2026-09-10', notes: [
+                'Fixed the Stats Report Map still opening far from Detroit -- a single report with a bad location on file (bad GPS/geocoding data) was throwing off the whole map\'s view. Reports like that no longer get pinned or affect what the map centers on.',
+            ] },
             { version: '3.46.1', date: '2026-09-10', notes: [
                 'Fixed the Stats Report Map sometimes opening zoomed out to the western US instead of Detroit.',
             ] },
@@ -2481,7 +2484,7 @@
         // container being hidden/reflowed, and this map's data (statsRange)
         // can change between opens anyway.
         function openStatsMap() {
-            const inRange = historyCache.filter((e) => isInStatsRange(e, statsRange) && Number.isFinite(e.lat) && Number.isFinite(e.lng));
+            const inRange = historyCache.filter((e) => isInStatsRange(e, statsRange) && Number.isFinite(e.lat) && Number.isFinite(e.lng) && isDetroitAreaCoord(e.lat, e.lng));
             const missingCoords = historyCache.filter((e) => isInStatsRange(e, statsRange)).length - inRange.length;
             const rangeLabel = statsRange === 'month' ? 'this month' : statsRange === 'year' ? 'this year' : 'all time';
 
@@ -5729,6 +5732,18 @@
         // Everything below is derived from historyCache, same as
         // Submission History and Repeat Offenders -- no separate Firestore
         // query needed.
+
+        // A generous Southeast Michigan bounding box (Detroit plus its
+        // suburbs and a healthy margin) -- used to keep a single bad
+        // coordinate (a mis-parsed EXIF GPS tag, a geocoder returning a
+        // same-named city in another state, etc.) from ever making it onto
+        // the Report Map. One such outlier is enough to drag fitBounds'
+        // computed center/zoom for *every* marker off toward it -- see
+        // openStatsMap -- so entries outside this box are treated the same
+        // as entries with no coordinates at all.
+        function isDetroitAreaCoord(lat, lng) {
+            return lat >= 41.5 && lat <= 43.5 && lng >= -84.5 && lng <= -82.0;
+        }
 
         function isInStatsRange(entry, range) {
             if (range === 'all') return true;
