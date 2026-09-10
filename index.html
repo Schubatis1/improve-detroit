@@ -1092,6 +1092,7 @@
     <script src="lib/format.js?v=3.46.1"></script>
     <script src="lib/permits.js?v=3.46.1"></script>
     <script src="lib/history.js?v=3.46.1"></script>
+    <script src="lib/workflow.js?v=3.46.1"></script>
 
     <script>
         // ==========================================
@@ -1565,26 +1566,12 @@
         // same as before this extraction) so they're unit-testable without
         // a DOM -- see test/geo.test.js, test/format.test.js.
 
-        // Finds the first configured geofence (if any) containing (lat, lng)
-        // that is also currently active (see geofenceActiveAt), and merges
-        // its fields over CONFIG.defaultWorkflow -- fields the geofence
-        // doesn't set fall back to the default. `when` defaults to now;
-        // pass the photo's own capture time for time-bound geofences to
-        // gate on when the obstruction happened, not when it's processed.
-        function resolveWorkflow(lat, lng, when) {
-            const now = when || new Date();
-            const geofence = geofencesCache.find((g) =>
-                geofenceContainsPoint(g, lat, lng)
-                && geofenceActiveAt(g, now)
-            );
-            const workflow = { ...CONFIG.defaultWorkflow };
-            if (geofence) {
-                if (geofence.message) workflow.descriptions = [geofence.message];
-                if (geofence.bluCategory) workflow.bluCategory = geofence.bluCategory;
-                if (geofence.improveDetroitCategory) workflow.natureValue = geofence.improveDetroitCategory;
-            }
-            return { workflow, geofence };
-        }
+        // resolveWorkflow now lives in lib/workflow.js (loaded as a plain
+        // global above, same as before this extraction; takes
+        // CONFIG.defaultWorkflow/geofencesCache as explicit parameters
+        // instead of reading them off globals, so it's testable) -- see
+        // test/workflow.test.js. Call as
+        // resolveWorkflow(CONFIG.defaultWorkflow, geofencesCache, lat, lng, when).
 
         // Re-derives and re-applies a workflow when the user manually
         // overrides the Geofence field on an already-processed vehicle
@@ -1643,14 +1630,10 @@
         // by scripts/backfill-plates.js so both stay in sync) -- see
         // test/identity.test.js.
 
-        // Finds the first plate rule (if any) matching a detected plate.
-        function findPlateRule(plate) {
-            const normalized = normalizePlate(plate);
-            if (!normalized) return null;
-            return CONFIG.plateRules.find((rule) =>
-                rule.plates.some((p) => normalizePlate(p) === normalized)
-            ) || null;
-        }
+        // findPlateRule now lives in lib/workflow.js (loaded as a plain
+        // global above; takes CONFIG.plateRules as an explicit parameter
+        // instead of reading it off CONFIG directly) -- see
+        // test/workflow.test.js. Call as findPlateRule(plate, CONFIG.plateRules).
 
         // Known-good fallback if the live schema fetch below fails: the exact
         // string (leading space included) that SeeClickFix accepted the one
@@ -2902,7 +2885,7 @@
                 // against the photo's own capture time, not "now" -- a
                 // time-bound geofence (e.g. "active after 2pm") is about
                 // when the obstruction was photographed.
-                const { workflow, geofence } = resolveWorkflow(item.lat, item.lng, photoDateObj);
+                const { workflow, geofence } = resolveWorkflow(CONFIG.defaultWorkflow, geofencesCache, item.lat, item.lng, photoDateObj);
 
                 logToConsole(`[${item.file.name}] Classifying photo with Gemini...`);
                 item.els.statusBadge.textContent = 'Classifying photo...';
@@ -3501,7 +3484,7 @@
         // the description if it still holds its auto-filled value -- once the
         // user starts editing, plate-driven changes stop overwriting it.
         function applyPlateWorkflow(item, plate) {
-            const rule = findPlateRule(plate);
+            const rule = findPlateRule(plate, CONFIG.plateRules);
             if (!rule) return;
 
             const address = item.els.address.value.trim();
@@ -5003,24 +4986,11 @@
         // (loaded as plain globals above, same as before this extraction)
         // -- see test/history.test.js.
 
-        // Predicate for the Submission History filters -- every active
-        // filter must match (AND, not OR). Date range is inclusive and
-        // compares by calendar day (not time-of-day) in the browser's
-        // local timezone, matching what the date inputs themselves show.
-        function applyHistoryFilters(entry) {
-            if (historyFilters.parkingDept && parkingDeptStatusCategory(entry) !== historyFilters.parkingDept) return false;
-            if (historyFilters.bluStatus && (entry.bluStatus || '') !== historyFilters.bluStatus) return false;
-            if (historyFilters.status && (entry.status || '') !== historyFilters.status) return false;
-            if (historyFilters.geofenceId) {
-                if (historyFilters.geofenceId === '__none__' ? !!entry.geofenceId : entry.geofenceId !== historyFilters.geofenceId) return false;
-            }
-            if (historyFilters.dateFrom || historyFilters.dateTo) {
-                const submitted = new Date(entry.submittedAt);
-                if (historyFilters.dateFrom && submitted < new Date(historyFilters.dateFrom + 'T00:00:00')) return false;
-                if (historyFilters.dateTo && submitted > new Date(historyFilters.dateTo + 'T23:59:59')) return false;
-            }
-            return true;
-        }
+        // applyHistoryFilters now lives in lib/history.js (loaded as a
+        // plain global above; takes `filters` as an explicit second
+        // parameter instead of reading the global historyFilters directly)
+        // -- see test/history.test.js. Call as
+        // applyHistoryFilters(entry, historyFilters).
 
         // Rebuilds the BLU Status/Improve Detroit Status <option> lists
         // from whatever values actually appear in historyCache (rather
@@ -5055,7 +5025,7 @@
 
         function renderHistory() {
             populateHistoryFilterOptions();
-            const filtered = historyCache.filter(applyHistoryFilters);
+            const filtered = historyCache.filter((entry) => applyHistoryFilters(entry, historyFilters));
             const hasActiveFilters = Object.values(historyFilters).some(Boolean);
 
             if (historyCache.length === 0) {

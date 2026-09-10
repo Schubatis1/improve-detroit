@@ -28,6 +28,28 @@ function parseArgs(argv) {
     return args;
 }
 
+// Split out from main() so it's testable against the Firestore emulator
+// without a real service account/Auth -- see test/scripts.integration.test.js.
+async function tagGeofenceOnIssues(db, uid, geofenceId, issueIds) {
+    const collection = db.collection('users').doc(uid).collection('history');
+
+    let tagged = 0;
+    for (const issueId of issueIds) {
+        const docRef = collection.doc(issueId);
+        const doc = await docRef.get();
+        if (!doc.exists) {
+            console.warn(`No history entry for issue #${issueId} -- skipping (import it first if it's not in Firestore yet).`);
+            continue;
+        }
+        await docRef.set({ geofenceId }, { merge: true });
+        console.log(`Tagged #${issueId} with geofenceId "${geofenceId}"`);
+        tagged++;
+    }
+
+    console.log(`Done. Tagged ${tagged}/${issueIds.length} issue(s).`);
+    return { tagged, total: issueIds.length };
+}
+
 async function main() {
     const args = parseArgs(process.argv.slice(2));
     if (!args['service-account'] || !args.geofence || !args['issue-ids']) {
@@ -43,22 +65,7 @@ async function main() {
     const issueIds = args['issue-ids'].split(',').map((s) => s.trim()).filter(Boolean);
 
     const db = admin.firestore();
-    const collection = db.collection('users').doc(user.uid).collection('history');
-
-    let tagged = 0;
-    for (const issueId of issueIds) {
-        const docRef = collection.doc(issueId);
-        const doc = await docRef.get();
-        if (!doc.exists) {
-            console.warn(`No history entry for issue #${issueId} -- skipping (import it first if it's not in Firestore yet).`);
-            continue;
-        }
-        await docRef.set({ geofenceId: args.geofence }, { merge: true });
-        console.log(`Tagged #${issueId} with geofenceId "${args.geofence}"`);
-        tagged++;
-    }
-
-    console.log(`Done. Tagged ${tagged}/${issueIds.length} issue(s).`);
+    await tagGeofenceOnIssues(db, user.uid, args.geofence, issueIds);
 }
 
 if (require.main === module) {
@@ -68,4 +75,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseArgs };
+module.exports = { parseArgs, tagGeofenceOnIssues };

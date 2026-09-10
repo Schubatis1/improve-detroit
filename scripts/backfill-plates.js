@@ -36,22 +36,13 @@ function parseArgs(argv) {
     return args;
 }
 
-async function main() {
-    const args = parseArgs(process.argv.slice(2));
-    if (!args['service-account']) {
-        console.error('Usage: node scripts/backfill-plates.js --service-account <key.json> [--email you@example.com]');
-        process.exit(1);
-    }
-
-    const serviceAccountPath = path.resolve(args['service-account']);
-    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
-    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-
-    const user = await admin.auth().getUserByEmail(args.email);
-    console.log(`Backfilling plates index for uid ${user.uid} (${args.email})`);
-
-    const db = admin.firestore();
-    const historySnapshot = await db.collection('users').doc(user.uid).collection('history').get();
+// The actual backfill logic, split out from main() so it's testable
+// against the Firestore emulator without a real service account/Auth --
+// see test/scripts.integration.test.js. `arrayUnion` is passed in rather
+// than reached via `admin.firestore.FieldValue.arrayUnion` so this
+// function doesn't need the `admin` module at all.
+async function backfillPlates(db, arrayUnion, uid) {
+    const historySnapshot = await db.collection('users').doc(uid).collection('history').get();
     console.log(`Found ${historySnapshot.size} history docs`);
 
     let batch = db.batch();
@@ -78,10 +69,10 @@ async function main() {
         }
 
         for (const plateId of plateIds) {
-            const plateRef = db.collection('users').doc(user.uid).collection('plates').doc(plateId);
+            const plateRef = db.collection('users').doc(uid).collection('plates').doc(plateId);
             batch.set(plateRef, {
                 plate: plateId,
-                incidentIds: admin.firestore.FieldValue.arrayUnion(issueId),
+                incidentIds: arrayUnion(issueId),
             }, { merge: true });
             opsInBatch++;
             plateDocsTouched++;
@@ -97,6 +88,25 @@ async function main() {
 
     console.log(`Updated plateIds on ${historyDocsTouched} history doc(s)`);
     console.log(`Upserted ${plateDocsTouched} plate-index write(s)`);
+    return { historyDocsTouched, plateDocsTouched };
+}
+
+async function main() {
+    const args = parseArgs(process.argv.slice(2));
+    if (!args['service-account']) {
+        console.error('Usage: node scripts/backfill-plates.js --service-account <key.json> [--email you@example.com]');
+        process.exit(1);
+    }
+
+    const serviceAccountPath = path.resolve(args['service-account']);
+    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+
+    const user = await admin.auth().getUserByEmail(args.email);
+    console.log(`Backfilling plates index for uid ${user.uid} (${args.email})`);
+
+    const db = admin.firestore();
+    await backfillPlates(db, admin.firestore.FieldValue.arrayUnion, user.uid);
 }
 
 if (require.main === module) {
@@ -106,4 +116,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseArgs };
+module.exports = { parseArgs, backfillPlates };

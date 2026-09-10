@@ -104,6 +104,19 @@ const GEOFENCES = [
     },
 ];
 
+// Split out from main() so it's testable against the Firestore emulator
+// without a real service account/Auth -- see test/scripts.integration.test.js.
+async function seedGeofences(db, uid) {
+    const collection = db.collection('users').doc(uid).collection('geofences');
+
+    for (const { id, ...data } of GEOFENCES) {
+        await collection.doc(id).set(data, { merge: true });
+        console.log(`Seeded geofence "${id}" (${data.name}).`);
+    }
+
+    console.log(`Done. Seeded ${GEOFENCES.length} geofence(s).`);
+}
+
 async function main() {
     const args = parseArgs(process.argv.slice(2));
     if (!args['service-account']) {
@@ -117,14 +130,7 @@ async function main() {
 
     const user = await admin.auth().getUserByEmail(args.email);
     const db = admin.firestore();
-    const collection = db.collection('users').doc(user.uid).collection('geofences');
-
-    for (const { id, ...data } of GEOFENCES) {
-        await collection.doc(id).set(data, { merge: true });
-        console.log(`Seeded geofence "${id}" (${data.name}).`);
-    }
-
-    console.log(`Done. Seeded ${GEOFENCES.length} geofence(s).`);
+    await seedGeofences(db, user.uid);
 }
 
 if (require.main === module) {
@@ -134,4 +140,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseArgs, GEOFENCES };
+module.exports = { parseArgs, GEOFENCES, seedGeofences };
