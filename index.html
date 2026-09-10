@@ -1091,13 +1091,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.46.0';
+        const APP_VERSION = '3.46.1';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.46.1', date: '2026-09-10', notes: [
+                'Fixed the Stats Report Map sometimes opening zoomed out to the western US instead of Detroit.',
+            ] },
             { version: '3.46.0', date: '2026-09-03', notes: [
                 'Fixed: after cancelling a letter, sending it again now actually mails it. Before, it looked like it sent -- preview, send date and all -- but nothing was ever printed.',
                 'The app\'s API keys moved off your phone and onto the server, so they\'re no longer sitting in a file anyone could read.',
@@ -2495,7 +2498,18 @@
             // and it keeps a bad/outlier coordinate or a stale container
             // size from ever pushing the default view out to a whole-country
             // scale like it used to.
-            statsMap = L.map(document.getElementById('statsMapWrap'), { minZoom: 10 });
+            //
+            // The initial setView here (unlike gfMap/historyFlyInMap/the
+            // mini map, this was the one Leaflet map in the app left
+            // viewless until fitBounds resolved) matters even though
+            // fitBounds is about to run: fitBounds' center/zoom math reads
+            // the container's pixel size, and the fly-in was just unhidden
+            // this same tick, so that size can still be stale/zero on the
+            // very first call -- which sent the computed center wildly off
+            // (observed landing in the western US) rather than merely
+            // under-zooming. Anchoring on Detroit first means a stale-size
+            // fitBounds call can only fail to move the view, never corrupt it.
+            statsMap = L.map(document.getElementById('statsMapWrap'), { minZoom: 10 }).setView([42.3314, -83.0458], 12);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '&copy; OpenStreetMap contributors',
                 maxZoom: 19,
