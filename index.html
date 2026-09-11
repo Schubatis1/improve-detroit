@@ -2671,6 +2671,8 @@
             const detail = document.createElement('div');
             detail.className = 'flex flex-col gap-3';
             detail.innerHTML = `
+                <img data-role="detailPhoto" src="${previewUrl}" class="w-full rounded-lg shadow-sm cursor-zoom-in" alt="Full-size submitted photo -- tap to zoom">
+
                 <div>
                     <label class="text-xs font-bold text-detroit-navy uppercase">Address</label>
                     <input type="text" data-role="address" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
@@ -2780,6 +2782,7 @@
             item.els = {
                 thumbnail: card.querySelector('[data-role="thumbnail"]'),
                 statusBadge: card.querySelector('[data-role="statusBadge"]'),
+                detailPhoto: detail.querySelector('[data-role="detailPhoto"]'),
                 address: detail.querySelector('[data-role="address"]'),
                 mapWrap: detail.querySelector('[data-role="mapWrap"]'),
                 coords: detail.querySelector('[data-role="coords"]'),
@@ -2824,6 +2827,7 @@
                 e.stopPropagation();
                 openLightbox(previewUrl);
             });
+            item.els.detailPhoto.addEventListener('click', () => openLightbox(previewUrl));
             card.addEventListener('click', () => openQueueItemFlyIn(item));
 
             return card;
