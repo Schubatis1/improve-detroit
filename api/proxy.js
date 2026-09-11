@@ -41,11 +41,24 @@ const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'improve-detroit'
 // failure, so moving its key server-side here wouldn't take it out of the
 // client. It's fetched at runtime from Firestore (config/secrets) rather
 // than committed, which is what keeps it out of the public repo.
+// api.github.com is only ever called for one thing -- dispatching the
+// submit-to-blu/submit-to-bikebureau GitHub Actions workflows on demand
+// from the "Sync" menu (see index.html's triggerSyncWorkflow) instead of
+// waiting for their twice-daily schedule. GITHUB_ACTIONS_TOKEN should be a
+// fine-grained PAT scoped to just this repo with "Actions: write" -- see
+// README. GitHub's REST API rejects requests with no User-Agent, which
+// fetch doesn't send by default, hence extraHeaders below.
 const ALLOWED_HOSTS = new Map([
     ['seeclickfix.com', { mode: 'inject', envVar: 'SEECLICKFIX_TOKEN', scheme: 'Bearer' }],
     ['api.platerecognizer.com', { mode: 'inject', envVar: 'PLATE_RECOGNIZER_API_KEY', scheme: 'Token' }],
     ['maps.googleapis.com', { mode: 'query', envVar: 'GOOGLE_MAPS_API_KEY', queryParam: 'key' }],
     ['my.mailstream.app', { mode: 'forward' }],
+    ['api.github.com', {
+        mode: 'inject',
+        envVar: 'GITHUB_ACTIONS_TOKEN',
+        scheme: 'Bearer',
+        extraHeaders: { 'user-agent': 'improve-detroit-app', 'x-github-api-version': '2022-11-28' },
+    }],
 ]);
 
 // Only forwarded in each direction; everything else (host, content-length,
@@ -160,6 +173,8 @@ async function handler(req, res) {
         const value = req.headers[name];
         if (value) headers[name] = value;
     }
+
+    if (upstreamAuth.extraHeaders) Object.assign(headers, upstreamAuth.extraHeaders);
 
     const anonymousUpstream = req.headers[ANONYMOUS_UPSTREAM_HEADER] === '1';
 

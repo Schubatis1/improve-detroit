@@ -56,6 +56,7 @@ beforeEach(() => {
     process.env.SEECLICKFIX_TOKEN = 'test-seeclickfix-token';
     process.env.PLATE_RECOGNIZER_API_KEY = 'test-plate-recognizer-key';
     process.env.GOOGLE_MAPS_API_KEY = 'test-google-maps-key';
+    process.env.GITHUB_ACTIONS_TOKEN = 'test-github-actions-token';
     global.fetch = vi.fn(async () => ({
         status: 200,
         headers: { get: () => 'application/json' },
@@ -67,6 +68,7 @@ afterEach(() => {
     delete process.env.SEECLICKFIX_TOKEN;
     delete process.env.PLATE_RECOGNIZER_API_KEY;
     delete process.env.GOOGLE_MAPS_API_KEY;
+    delete process.env.GITHUB_ACTIONS_TOKEN;
     vi.unstubAllGlobals();
 });
 
@@ -211,6 +213,18 @@ describe('credential injection', () => {
         const [calledUrl] = global.fetch.mock.calls[0];
         const parsed = new URL(calledUrl);
         expect(parsed.searchParams.getAll('key')).toEqual(['test-google-maps-key']);
+    });
+
+    it('mode "inject" (Bearer scheme) for GitHub, plus its extraHeaders', async () => {
+        const req = makeReq({
+            url: 'https://api.github.com/repos/Schubatis1/improve-detroit/actions/workflows/submit-to-blu.yml/dispatches',
+            headers: { authorization: 'Bearer good-token' },
+        });
+        await handler(req, makeRes());
+        const [, init] = global.fetch.mock.calls[0];
+        expect(init.headers.authorization).toBe('Bearer test-github-actions-token');
+        expect(init.headers['user-agent']).toBe('improve-detroit-app');
+        expect(init.headers['x-github-api-version']).toBe('2022-11-28');
     });
 
     it('mode "forward" attaches the caller-supplied X-Upstream-Authorization, and nothing when absent', async () => {

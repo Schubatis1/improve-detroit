@@ -149,6 +149,22 @@
             Refresh All Statuses &amp; Comments
         </button>
         <p id="refreshAllStatus" class="text-[10px] text-slate-400 -mt-1 mb-1"></p>
+        <!-- Sync: triggers the same GitHub Actions workflows that already
+             run twice daily on a schedule (see scripts/submit-to-blu.js,
+             scripts/submit-to-bikebureau.js) on demand, via the GitHub API
+             workflow_dispatch endpoint -- see triggerSyncWorkflow and
+             api/proxy.js's api.github.com host entry. Only fires the
+             workflow; the run itself still happens on GitHub's runners, so
+             this tab can be closed right after without interrupting it. -->
+        <p class="text-[10px] font-bold uppercase text-slate-400 mt-2 mb-1">Sync</p>
+        <button id="syncBluBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2 disabled:opacity-50 disabled:hover:text-detroit-navy">
+            Sync to Bike Lane Uprising Now
+        </button>
+        <p id="syncBluStatus" class="text-[10px] text-slate-400 -mt-1 mb-1"></p>
+        <button id="syncBikeBureauBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2 disabled:opacity-50 disabled:hover:text-detroit-navy">
+            Sync to Bike Bureau Now
+        </button>
+        <p id="syncBikeBureauStatus" class="text-[10px] text-slate-400 -mt-1 mb-1"></p>
         <button id="debugToggleBtn" class="text-left text-sm font-semibold text-detroit-navy hover:text-detroit-teal py-2">
             Show Debug Console
         </button>
@@ -961,11 +977,12 @@
             </button>
         </div>
 
-        <!-- Options for filterBluStatus/filterStatus are populated from
-             whatever values actually appear in historyCache (see
-             populateHistoryFilterOptions), not a hardcoded list -- BLU/
-             SeeClickFix status strings aren't a small fixed enum this app
-             controls. filterGeofence's options come from geofencesCache. -->
+        <!-- Options for filterBluStatus/filterBikeBureauStatus/filterStatus
+             are populated from whatever values actually appear in
+             historyCache (see populateHistoryFilterOptions), not a
+             hardcoded list -- BLU/Bike Bureau/SeeClickFix status strings
+             aren't a small fixed enum this app controls. filterGeofence's
+             options come from geofencesCache. -->
         <div id="historyFiltersPanel" class="hidden bg-white rounded-lg shadow-sm p-3 mb-2 flex flex-col gap-2">
             <div>
                 <label class="text-[10px] font-bold text-detroit-navy uppercase">Parking Dept Status</label>
@@ -980,6 +997,12 @@
             <div>
                 <label class="text-[10px] font-bold text-detroit-navy uppercase">BLU Status</label>
                 <select id="filterBluStatus" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
+                    <option value="">All</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-[10px] font-bold text-detroit-navy uppercase">Bike Bureau Status</label>
+                <select id="filterBikeBureauStatus" class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
                     <option value="">All</option>
                 </select>
             </div>
@@ -1703,8 +1726,8 @@
         });
 
         // Submission History filters -- see applyHistoryFilters (the
-        // predicate), populateHistoryFilterOptions (BLU/Improve Detroit
-        // dropdowns, populated from whatever values actually appear in
+        // predicate), populateHistoryFilterOptions (BLU/Bike Bureau/Improve
+        // Detroit dropdowns, populated from whatever values actually appear in
         // historyCache rather than a hardcoded list), and renderHistory
         // (where filtering happens, before the Show All collapse above).
         const historyFiltersToggleBtn = document.getElementById('historyFiltersToggleBtn');
@@ -1713,11 +1736,12 @@
         const historyFiltersPanel = document.getElementById('historyFiltersPanel');
         const filterParkingDeptEl = document.getElementById('filterParkingDept');
         const filterBluStatusEl = document.getElementById('filterBluStatus');
+        const filterBikeBureauStatusEl = document.getElementById('filterBikeBureauStatus');
         const filterStatusEl = document.getElementById('filterStatus');
         const filterGeofenceEl = document.getElementById('filterGeofence');
         const filterDateFromEl = document.getElementById('filterDateFrom');
         const filterDateToEl = document.getElementById('filterDateTo');
-        const historyFilters = { parkingDept: '', bluStatus: '', status: '', geofenceId: '', dateFrom: '', dateTo: '' };
+        const historyFilters = { parkingDept: '', bluStatus: '', bikeBureauStatus: '', status: '', geofenceId: '', dateFrom: '', dateTo: '' };
 
         historyFiltersToggleBtn.addEventListener('click', () => {
             const nowOpen = historyFiltersPanel.classList.toggle('hidden') === false;
@@ -1726,6 +1750,7 @@
         [
             [filterParkingDeptEl, 'parkingDept'],
             [filterBluStatusEl, 'bluStatus'],
+            [filterBikeBureauStatusEl, 'bikeBureauStatus'],
             [filterStatusEl, 'status'],
             [filterGeofenceEl, 'geofenceId'],
             [filterDateFromEl, 'dateFrom'],
@@ -2147,6 +2172,15 @@
         // the other menu buttons, its whole point is watching
         // #refreshAllStatus's progress text update in place while it runs.
         document.getElementById('refreshAllBtn').addEventListener('click', refreshAllStatusesAndComments);
+
+        // Sync buttons -- same reasoning as Refresh All: stay open so
+        // #syncBluStatus/#syncBikeBureauStatus's outcome is visible.
+        document.getElementById('syncBluBtn').addEventListener('click', () => triggerSyncWorkflow(
+            'submit-to-blu.yml', document.getElementById('syncBluBtn'), document.getElementById('syncBluStatus')
+        ));
+        document.getElementById('syncBikeBureauBtn').addEventListener('click', () => triggerSyncWorkflow(
+            'submit-to-bikebureau.yml', document.getElementById('syncBikeBureauBtn'), document.getElementById('syncBikeBureauStatus')
+        ));
 
         function renderReleaseNotes() {
             document.getElementById('releaseNotesList').innerHTML = RELEASE_NOTES.map((entry) => `
@@ -2692,6 +2726,10 @@
 
                 <div data-role="plateWrap">
                     <label class="text-xs font-bold text-detroit-navy uppercase">License Plate (optional)</label>
+                    <div data-role="plateCropWrap" class="hidden mb-2">
+                        <canvas data-role="plateCrop" class="w-full rounded-lg border-2 border-detroit-teal shadow-sm bg-slate-100" style="max-height:140px"></canvas>
+                        <p class="text-[10px] text-slate-400 mt-1">Zoomed to Plate Recognizer's detected plate region -- verify against this crop.</p>
+                    </div>
                     <input type="text" data-role="plate" placeholder="Auto-detecting..." class="w-full text-sm border border-detroit-mint rounded px-2 py-1 mt-1">
                     <p class="text-[10px] text-slate-400 mt-1" data-role="plateNote">AI-detected from the photo -- please verify before submitting.</p>
                 </div>
@@ -2759,6 +2797,8 @@
                 vehicleWrap: detail.querySelector('[data-role="vehicleWrap"]'),
                 vehicle: detail.querySelector('[data-role="vehicle"]'),
                 plateWrap: detail.querySelector('[data-role="plateWrap"]'),
+                plateCropWrap: detail.querySelector('[data-role="plateCropWrap"]'),
+                plateCrop: detail.querySelector('[data-role="plateCrop"]'),
                 plate: detail.querySelector('[data-role="plate"]'),
                 plateNote: detail.querySelector('[data-role="plateNote"]'),
                 companyWrap: detail.querySelector('[data-role="companyWrap"]'),
@@ -3426,7 +3466,20 @@
                 if (best && best.plate) {
                     const confidencePct = Math.round((best.score || 0) * 100);
                     logToConsole(`[${item.file.name}] Plate Recognizer detected: ${best.plate.toUpperCase()} (${confidencePct}% confidence).`);
-                    return best.plate.toUpperCase();
+                    // best.box locates the plate in pixel coordinates of the
+                    // downscaled image we just uploaded (xmin/ymin/xmax/ymax)
+                    // -- kept alongside the plate string so the UI can crop
+                    // and zoom to it (see renderPlateCrop), the same "box out
+                    // and zoom in on the plate" review Loud Bicycle's own
+                    // submit form does. sourceWidth/sourceHeight (the
+                    // downscaled image's own dimensions, not the original
+                    // photo's) are what the box's coordinates are relative
+                    // to, so the crop can be rescaled onto the full-res photo.
+                    const bitmap = await createImageBitmap(upload);
+                    const sourceWidth = bitmap.width;
+                    const sourceHeight = bitmap.height;
+                    bitmap.close();
+                    return { plate: best.plate.toUpperCase(), box: best.box || null, sourceWidth, sourceHeight };
                 }
                 logToConsole(`[${item.file.name}] Plate Recognizer found no plate.`);
                 return null;
@@ -3436,14 +3489,78 @@
             }
         }
 
+        // Draws a zoomed, boxed-out crop of the detected plate region into
+        // the fly-in's plateCrop canvas -- the same "box out and zoom in on
+        // the plate" review Loud Bicycle's own submit form does, so the user
+        // can check the plate reading against the actual pixels without
+        // squinting at (or leaving the fly-in to open) the full photo.
+        //
+        // box/srcWidth/srcHeight describe the plate's location in the
+        // *downscaled* image Plate Recognizer actually saw (see
+        // plateRecognizerLookup) -- item.previewUrl is the original,
+        // full-resolution photo, so the box is rescaled proportionally onto
+        // whatever resolution that turns out to be once it loads.
+        function renderPlateCrop(item, box, srcWidth, srcHeight) {
+            const img = new Image();
+            img.onload = () => {
+                if (item.status !== 'ready' && item.status !== 'error') return; // submitted/removed while loading
+
+                const scaleX = img.naturalWidth / srcWidth;
+                const scaleY = img.naturalHeight / srcHeight;
+                const boxX = box.xmin * scaleX;
+                const boxY = box.ymin * scaleY;
+                const boxW = (box.xmax - box.xmin) * scaleX;
+                const boxH = (box.ymax - box.ymin) * scaleY;
+                if (!(boxW > 0) || !(boxH > 0)) return; // malformed box -- nothing sane to draw
+
+                // Pad well beyond the plate itself so the crop shows some of
+                // the bumper/vehicle around it for context, rather than a
+                // crop so tight it's hard to tell what you're looking at.
+                const padX = boxW * 0.6;
+                const padY = boxH * 0.6;
+                const cropX = Math.max(0, boxX - padX);
+                const cropY = Math.max(0, boxY - padY);
+                const cropW = Math.min(img.naturalWidth - cropX, boxW + padX * 2);
+                const cropH = Math.min(img.naturalHeight - cropY, boxH + padY * 2);
+
+                const canvas = item.els.plateCrop;
+                const outWidth = 480;
+                const outHeight = Math.round(outWidth * (cropH / cropW));
+                canvas.width = outWidth;
+                canvas.height = outHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, outWidth, outHeight);
+
+                // Outline exactly what Plate Recognizer flagged as the
+                // plate, rescaled into this crop's own coordinate space.
+                const scale = outWidth / cropW;
+                ctx.strokeStyle = '#e11d48';
+                ctx.lineWidth = 3;
+                ctx.strokeRect((boxX - cropX) * scale, (boxY - cropY) * scale, boxW * scale, boxH * scale);
+
+                item.els.plateCropWrap.classList.remove('hidden');
+            };
+            img.onerror = () => {}; // best-effort -- the plate text field/note still work without this
+            img.src = item.previewUrl;
+        }
+
         // Cross-checks Gemini's plate reading against Plate Recognizer's.
         // Runs after the card is already shown (non-blocking), since Plate
         // Recognizer is slower and now only used for verification, not
         // primary detection. Updates the plate field/note in place; never
         // overwrites a plate the user has already started editing.
         async function crossCheckPlate(item, geminiPlate) {
-            const prPlate = await plateRecognizerLookup(item);
+            const prResult = await plateRecognizerLookup(item);
             if (item.status !== 'ready' && item.status !== 'error') return; // submitted/removed meanwhile
+
+            const prPlate = prResult ? prResult.plate : null;
+            // Render the zoomed/boxed plate crop regardless of which plate
+            // ends up in the field below -- it's Plate Recognizer's
+            // detection box either way, and it's just as useful for
+            // verifying Gemini's reading as Plate Recognizer's own.
+            if (prResult && prResult.box) {
+                renderPlateCrop(item, prResult.box, prResult.sourceWidth, prResult.sourceHeight);
+            }
 
             const gPlate = geminiPlate ? geminiPlate.toUpperCase() : null;
             const userEdited = item.els.plate.value.trim() !== (gPlate || '');
@@ -4355,7 +4472,7 @@
                     <div class="flex-1 min-w-0">
                         <p class="text-sm font-medium text-detroit-dark truncate">${escapeHtml(entry.address || '')}</p>
                         <p class="text-[10px] text-slate-400">${entry.suppressed ? 'Not reported to Detroit' : `#${entry.issueId}`} &middot; ${new Date(entry.submittedAt).toLocaleString()}</p>
-                        <p class="text-[10px] font-bold uppercase text-slate-500">${entry.status}${entry.bluStatus ? ` &middot; BLU: ${entry.bluStatus}` : ''}</p>
+                        <p class="text-[10px] font-bold uppercase text-slate-500">${entry.status}${entry.bluStatus ? ` &middot; BLU: ${entry.bluStatus}` : ''}${entry.bikeBureauStatus ? ` &middot; BB: ${entry.bikeBureauStatus}` : ''}</p>
                     </div>
                     <div class="flex flex-col gap-1 flex-shrink-0 items-end">
                         ${entry.link ? `<a href="${entry.link}" target="_blank" rel="noopener" class="text-xs text-detroit-teal font-semibold">View</a>` : ''}
@@ -4904,6 +5021,10 @@
                 // leaves 'pending' (see isBluLocked/openHistoryFlyIn).
                 description: item.els.description.value.trim(),
                 bluStatus: 'pending',
+                // Mirrored to Bike Bureau the same way, by
+                // scripts/submit-to-bikebureau.js -- see
+                // .github/workflows/submit-to-bikebureau.yml.
+                bikeBureauStatus: 'pending',
                 ...(autoFlagParkingDept ? {
                     parkingDeptFlag: 'flagged',
                     parkingDeptFlaggedAt: new Date().toISOString(),
@@ -4917,8 +5038,9 @@
                     await photoRef.put(item.file);
                     entry.photoUrl = await photoRef.getDownloadURL();
                 } catch (photoErr) {
-                    logToConsole(`Could not upload full-size photo for #${issueId} to Storage -- BLU auto-submit will skip this report: ${photoErr instanceof Error ? photoErr.message : photoErr}`, true);
+                    logToConsole(`Could not upload full-size photo for #${issueId} to Storage -- BLU/Bike Bureau auto-submit will skip this report: ${photoErr instanceof Error ? photoErr.message : photoErr}`, true);
                     entry.bluStatus = 'photo-upload-failed';
+                    entry.bikeBureauStatus = 'photo-upload-failed';
                 }
 
                 // History doc and its plates-index entries are written
@@ -4992,11 +5114,12 @@
         // -- see test/history.test.js. Call as
         // applyHistoryFilters(entry, historyFilters).
 
-        // Rebuilds the BLU Status/Improve Detroit Status <option> lists
-        // from whatever values actually appear in historyCache (rather
-        // than a hardcoded list -- these are raw strings from Bike Lane
-        // Uprising/SeeClickFix, not a small fixed enum this app defines),
-        // and the Geofence list from geofencesCache. Preserves the
+        // Rebuilds the BLU Status/Bike Bureau Status/Improve Detroit Status
+        // <option> lists from whatever values actually appear in
+        // historyCache (rather than a hardcoded list -- these are raw
+        // strings from Bike Lane Uprising/Bike Bureau/SeeClickFix, not a
+        // small fixed enum this app defines), and the Geofence list from
+        // geofencesCache. Preserves the
         // currently-selected filter value (from historyFilters, not the
         // <select>'s own DOM state, which regenerating innerHTML wipes)
         // if it's still a valid option; falls back to "All" otherwise.
@@ -5005,6 +5128,11 @@
             filterBluStatusEl.innerHTML = '<option value="">All</option>'
                 + bluValues.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
             filterBluStatusEl.value = bluValues.includes(historyFilters.bluStatus) ? historyFilters.bluStatus : '';
+
+            const bikeBureauValues = [...new Set(historyCache.map((e) => e.bikeBureauStatus).filter(Boolean))].sort();
+            filterBikeBureauStatusEl.innerHTML = '<option value="">All</option>'
+                + bikeBureauValues.map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+            filterBikeBureauStatusEl.value = bikeBureauValues.includes(historyFilters.bikeBureauStatus) ? historyFilters.bikeBureauStatus : '';
 
             const statusValues = [...new Set(historyCache.map((e) => e.status).filter(Boolean))].sort();
             filterStatusEl.innerHTML = '<option value="">All</option>'
@@ -5049,7 +5177,7 @@
                         <img src="${entry.thumbnail}" class="w-12 h-12 lg:w-32 lg:h-32 object-cover rounded-lg flex-shrink-0" alt="Submitted photo">
                         <div class="flex-1 min-w-0">
                             <p class="text-sm font-medium text-detroit-dark truncate">${entry.address}</p>
-                            <p class="text-[10px] font-bold uppercase text-slate-500 truncate">${entry.status}${entry.bluStatus ? ` &middot; BLU: ${entry.bluStatus}` : ''}</p>
+                            <p class="text-[10px] font-bold uppercase text-slate-500 truncate">${entry.status}${entry.bluStatus ? ` &middot; BLU: ${entry.bluStatus}` : ''}${entry.bikeBureauStatus ? ` &middot; BB: ${entry.bikeBureauStatus}` : ''}</p>
                         </div>
                         <svg class="w-4 h-4 text-slate-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
@@ -5098,7 +5226,7 @@
                     <img src="${entry.thumbnail}" class="w-16 h-16 object-cover rounded-lg flex-shrink-0" alt="Submitted photo">
                     <div class="flex-1 min-w-0">
                         <p class="text-xs text-slate-400">${entry.suppressed ? 'Not reported to Detroit' : `#${entry.issueId}`} &middot; ${new Date(entry.submittedAt).toLocaleString()}</p>
-                        <p class="text-xs font-bold uppercase text-slate-500 mt-1">${entry.status}${entry.bluStatus ? ` &middot; BLU: ${entry.bluStatus}` : ''}${entry.parkingDeptFlag ? ` &middot; Parking Dept: ${parkingDeptFlagLabel(entry.parkingDeptFlag)}` : ''}</p>
+                        <p class="text-xs font-bold uppercase text-slate-500 mt-1">${entry.status}${entry.bluStatus ? ` &middot; BLU: ${entry.bluStatus}` : ''}${entry.bikeBureauStatus ? ` &middot; BB: ${entry.bikeBureauStatus}` : ''}${entry.parkingDeptFlag ? ` &middot; Parking Dept: ${parkingDeptFlagLabel(entry.parkingDeptFlag)}` : ''}</p>
                     </div>
                 </div>
 
@@ -5896,6 +6024,45 @@
             statusEl.textContent = `Done -- ${statusOk}/${entries.length} statuses, ${commentsOk}/${entries.length} comment threads refreshed.`;
             logToConsole(`Refresh All complete: ${statusOk}/${entries.length} statuses, ${commentsOk}/${entries.length} comment threads.`);
             btn.disabled = false;
+        }
+
+        // ==========================================
+        // Sync (hamburger menu): fires the submit-to-blu.yml/
+        // submit-to-bikebureau.yml GitHub Actions workflows on demand
+        // instead of waiting for their twice-daily cron (see
+        // scripts/submit-to-blu.js, scripts/submit-to-bikebureau.js). Just
+        // a workflow_dispatch API call -- it doesn't wait for the run to
+        // finish (GitHub's API returns 204 immediately, before the runner
+        // even starts), so "Done" here means "queued", not "submitted".
+        // Progress/outcome for the run itself is only visible on GitHub
+        // (Actions tab) or, once it finishes, as each entry's
+        // bluStatus/bikeBureauStatus in Submission History.
+        const GITHUB_REPO = 'Schubatis1/improve-detroit';
+        async function triggerSyncWorkflow(workflowFile, btn, statusEl) {
+            btn.disabled = true;
+            statusEl.textContent = 'Queuing...';
+            try {
+                const response = await proxyFetch(
+                    `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${workflowFile}/dispatches`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ref: 'main' }),
+                    }
+                );
+                if (!response.ok) {
+                    const body = await response.text().catch(() => '');
+                    throw new Error(`GitHub API returned ${response.status}${body ? `: ${body}` : ''}`);
+                }
+                statusEl.textContent = `Queued -- check the Actions tab on GitHub for progress (${new Date().toLocaleTimeString()}).`;
+                logToConsole(`Sync: queued ${workflowFile} via workflow_dispatch.`);
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                statusEl.textContent = `Error: ${message}`;
+                logToConsole(`Sync: failed to queue ${workflowFile}: ${message}`, true);
+            } finally {
+                btn.disabled = false;
+            }
         }
 
         // ==========================================

@@ -26,6 +26,7 @@ environments), then redeploy:
 | `SEECLICKFIX_TOKEN` | SeeClickFix API token (files real tickets with the City) | SeeClickFix account settings |
 | `PLATE_RECOGNIZER_API_KEY` | Plate Recognizer key (billable) | platerecognizer.com dashboard |
 | `GOOGLE_MAPS_API_KEY` | Google Geocoding API key (billable) | Google Cloud Console -> Credentials |
+| `GITHUB_ACTIONS_TOKEN` | Fires the submit-to-blu/submit-to-bikebureau workflows on demand from the app's Sync menu | GitHub -> Settings -> Developer settings -> Fine-grained tokens; scope it to just this repo, "Actions: Read and write" permission only |
 | `FIREBASE_PROJECT_ID` | Optional; defaults to `improve-detroit` | -- |
 
 The Gemini and MailStream keys are separate: they're read at runtime from
@@ -103,7 +104,33 @@ See `package.json`. All of them need a Firebase service account key
 `--service-account`; never commit it.
 
 - `npm run submit-to-blu` -- mirrors pending reports to Bike Lane Uprising
-  (also runs twice daily via GitHub Actions)
+  (also runs twice daily via GitHub Actions, and can be queued on demand
+  from the app's hamburger menu -> Sync -> "Sync to Bike Lane Uprising Now",
+  which just fires the same workflow via the GitHub API -- see
+  `GITHUB_ACTIONS_TOKEN` above and `triggerSyncWorkflow` in index.html)
+- `npm run submit-to-bikebureau` -- mirrors pending reports to Bike Bureau
+  (loudbicycle.com/bb; also runs twice daily via GitHub Actions). Unlike BLU
+  this needs no site login of its own (no `BLU_EMAIL`/`BLU_PASSWORD`
+  equivalent) -- the submit form is a guest upload, and Bike Bureau reads
+  plate/date/location straight from the photo's own EXIF/pixels
+  client-side. Still needs the same Firebase service account as the other
+  scripts. A signed-out session can show a Cloudflare "Verify you are
+  human" check on pretty much any submission (in one real run, roughly 1 in
+  6 got through clean); this script never solves or bypasses it itself (and
+  won't try to sign in first to avoid it either -- Google blocks sign-in
+  from any automation-controlled browser outright). In `--headed` mode it
+  pauses and waits (5 minutes by default) for you to click the checkbox
+  yourself, then continues; headless, it has no one to do that, so it stops
+  the whole run (exit code 2) instead of burning through the rest one by
+  one. Same stop-instead-of-mis-marking treatment applies if the
+  browser/tab itself dies mid-run. Either way, whatever's left stays
+  `bikeBureauStatus: 'pending'` for the next run -- given how often the
+  check shows up, `--headed` is the practical way to get through a large
+  batch. `--channel chrome` and `--user-data-dir <path>` are also available
+  if you'd rather it drive a real Chrome install/profile instead of
+  Playwright's bundled Chromium and a throwaway profile -- neither is known
+  to actually help with the Cloudflare check or the (unrelated, unfixable)
+  Google sign-in block, they're just options if you want to try.
 - `npm run import-history` -- imports past SeeClickFix submissions
 - `npm run backfill-plates` -- rebuilds the plate index over old history
 - `npm run seed-geofences` -- seeds the starting geofence set

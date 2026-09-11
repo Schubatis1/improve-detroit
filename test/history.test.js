@@ -54,6 +54,13 @@ describe('applyHistoryFilters', () => {
         expect(applyHistoryFilters({}, filters)).toBe(false);
     });
 
+    it('filters by exact bikeBureauStatus', () => {
+        const filters = { bikeBureauStatus: 'submitted' };
+        expect(applyHistoryFilters({ bikeBureauStatus: 'submitted' }, filters)).toBe(true);
+        expect(applyHistoryFilters({ bikeBureauStatus: 'failed' }, filters)).toBe(false);
+        expect(applyHistoryFilters({}, filters)).toBe(false);
+    });
+
     it('filters by exact status', () => {
         const filters = { status: 'Open' };
         expect(applyHistoryFilters({ status: 'Open' }, filters)).toBe(true);
