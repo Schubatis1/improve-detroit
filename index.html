@@ -1124,13 +1124,17 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.46.2';
+        const APP_VERSION = '3.47.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.47.0', date: '2026-09-11', notes: [
+                'Reports now also mirror to Bike Bureau (loudbicycle.com/bb), alongside Bike Lane Uprising.',
+                'The report editor now shows the full photo, and zooms in on the detected license plate so you can double check it against the actual pixels.',
+            ] },
             { version: '3.46.2', date: '2026-09-10', notes: [
                 'Fixed the Stats Report Map still opening far from Detroit -- a single report with a bad location on file (bad GPS/geocoding data) was throwing off the whole map\'s view. Reports like that no longer get pinned or affect what the map centers on.',
             ] },
