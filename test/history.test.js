@@ -1,4 +1,4 @@
-const { isBluLocked, parkingDeptStatusCategory, applyHistoryFilters } = require('../lib/history.js');
+const { isBluLocked, parkingDeptStatusCategory, applyHistoryFilters, mergeHistorySnapshot } = require('../lib/history.js');
 
 describe('isBluLocked', () => {
     it('is false while bluStatus is pending or unset', () => {
@@ -91,5 +91,49 @@ describe('applyHistoryFilters', () => {
         const filters = { bluStatus: 'submitted', status: 'Open' };
         expect(applyHistoryFilters({ bluStatus: 'submitted', status: 'Open' }, filters)).toBe(true);
         expect(applyHistoryFilters({ bluStatus: 'submitted', status: 'Closed' }, filters)).toBe(false);
+    });
+});
+
+describe('mergeHistorySnapshot', () => {
+    it('keeps a _localOnly entry the new snapshot does not have yet', () => {
+        const currentCache = [
+            { issueId: '1', submittedAt: '2024-06-02T00:00:00Z', _localOnly: true },
+        ];
+        const synced = [
+            { issueId: '2', submittedAt: '2024-06-01T00:00:00Z' },
+        ];
+        const result = mergeHistorySnapshot(currentCache, synced);
+        expect(result.map((e) => e.issueId)).toEqual(['1', '2']);
+    });
+
+    it('drops a _localOnly entry once the snapshot has synced it', () => {
+        const currentCache = [
+            { issueId: '1', submittedAt: '2024-06-02T00:00:00Z', _localOnly: true },
+        ];
+        const synced = [
+            { issueId: '1', submittedAt: '2024-06-02T00:00:00Z' }, // now synced, no _localOnly
+        ];
+        const result = mergeHistorySnapshot(currentCache, synced);
+        expect(result).toEqual([{ issueId: '1', submittedAt: '2024-06-02T00:00:00Z' }]);
+    });
+
+    it('never keeps a non-_localOnly stale entry the snapshot dropped (e.g. a real delete)', () => {
+        const currentCache = [
+            { issueId: '1', submittedAt: '2024-06-02T00:00:00Z' },
+        ];
+        const result = mergeHistorySnapshot(currentCache, []);
+        expect(result).toEqual([]);
+    });
+
+    it('sorts the merged result newest-first by submittedAt', () => {
+        const currentCache = [
+            { issueId: 'local', submittedAt: '2024-06-15T00:00:00Z', _localOnly: true },
+        ];
+        const synced = [
+            { issueId: 'old', submittedAt: '2024-06-01T00:00:00Z' },
+            { issueId: 'new', submittedAt: '2024-06-30T00:00:00Z' },
+        ];
+        const result = mergeHistorySnapshot(currentCache, synced);
+        expect(result.map((e) => e.issueId)).toEqual(['new', 'local', 'old']);
     });
 });
