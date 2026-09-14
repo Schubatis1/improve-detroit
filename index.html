@@ -1124,13 +1124,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.47.3';
+        const APP_VERSION = '3.47.4';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.47.4', date: '2026-09-14', notes: [
+                'Fixed a second way a submitted report could silently disappear from history: if saving it to your account failed and it fell back to showing locally-only, it could then get wiped out by the very next report syncing successfully. It now stays visible until it actually syncs.',
+            ] },
             { version: '3.47.3', date: '2026-09-14', notes: [
                 'Fixed: submitting a report could silently fail to save to your history (with no error shown) if the photo\'s thumbnail failed to generate. The ticket was still filed with Improve Detroit either way -- it just wasn\'t showing up here afterward.',
             ] },
@@ -4122,7 +4125,12 @@
                 .orderBy('submittedAt', 'desc')
                 .onSnapshot(
                     (snapshot) => {
-                        historyCache = snapshot.docs.map(historyEntryFromDoc);
+                        // mergeHistorySnapshot (lib/history.js) preserves
+                        // any _localOnly entry (a failed-after-retrying
+                        // Firestore write -- see addToHistory's catch) this
+                        // snapshot doesn't have yet, instead of silently
+                        // dropping it -- see that function's comment.
+                        historyCache = mergeHistorySnapshot(historyCache, snapshot.docs.map(historyEntryFromDoc));
                         cacheHistoryLocally();
                         renderHistory();
                         resolveHistoryReady();
@@ -5104,8 +5112,17 @@
                 await commitWithRetry(batch, `Submission #${issueId}`);
                 // onSnapshot picks both up and calls renderHistory()/renderOffenders() itself.
             } catch (err) {
-                logToConsole(`Could not sync submission #${issueId} to Firestore after retrying -- showing it locally for this session only: ${err instanceof Error ? err.message : err}`, true);
-                historyCache.unshift({ issueId, ...entry });
+                logToConsole(`Could not sync submission #${issueId} to Firestore after retrying -- showing it locally until it syncs: ${err instanceof Error ? err.message : err}`, true);
+                // _localOnly marks this so initHistorySync's onSnapshot
+                // handler preserves it across the next Firestore snapshot
+                // instead of silently wiping it out -- onSnapshot fires (and
+                // used to overwrite historyCache wholesale) on ANY change to
+                // the collection, including some other report's successful
+                // submission moments later, which is exactly the situation
+                // a batch of photos creates. Never written to Firestore
+                // itself (batch.set above already failed); purely a local
+                // marker.
+                historyCache.unshift({ issueId, _localOnly: true, ...entry });
                 cacheHistoryLocally();
                 for (const plateId of plateIds) {
                     let plateEntry = platesCache.find((p) => p.id === plateId);
