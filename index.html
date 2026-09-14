@@ -1124,13 +1124,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.47.0';
+        const APP_VERSION = '3.47.1';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.47.1', date: '2026-09-14', notes: [
+                'Photo/comment classification now starts on Gemini 3.6 Flash instead of falling back to it only after gemini-flash-latest gets overloaded -- fewer minutes-long waits during busy periods.',
+            ] },
             { version: '3.47.0', date: '2026-09-11', notes: [
                 'Reports now also mirror to Bike Bureau (loudbicycle.com/bb), alongside Bike Lane Uprising.',
                 'The report editor now shows the full photo, and zooms in on the detected license plate so you can double check it against the actual pixels.',
@@ -3239,16 +3242,16 @@
 
         // Primary model plus the quota/overload fallback used by both Gemini
         // call sites below (classifyPhotoWithGemini, classifyCommentWithGemini).
-        // gemini-flash-latest's quota is shared/tighter than gemini-3.6-flash's,
-        // so on a 429 (RESOURCE_EXHAUSTED) or a 503 (transient overload, after
-        // retrying the same model a few times first) this retries against the
-        // other model instead of failing the whole call outright. Was
-        // gemini-2.5-flash until Google retired it for new callers (404,
-        // pointing here) -- every classification was silently falling back to
-        // the no-plate/no-company/no-USDOT default until this was caught by
-        // testing the company/USDOT combine-reports flow.
-        const GEMINI_MODEL = 'gemini-flash-latest';
-        const GEMINI_FALLBACK_MODEL = 'gemini-3.6-flash';
+        // gemini-3.6-flash is the default; on a 429 (RESOURCE_EXHAUSTED) or a
+        // 503 (transient overload, after retrying the same model a few times
+        // first) this retries against gemini-flash-latest instead of failing
+        // the whole call outright. Was gemini-2.5-flash until Google retired
+        // it for new callers (404, pointing here) -- every classification
+        // was silently falling back to the no-plate/no-company/no-USDOT
+        // default until this was caught by testing the company/USDOT
+        // combine-reports flow.
+        const GEMINI_MODEL = 'gemini-3.6-flash';
+        const GEMINI_FALLBACK_MODEL = 'gemini-flash-latest';
 
         async function callGeminiWithFallback(requestBody, logPrefix) {
             const attempt = async (model) => {
