@@ -6,6 +6,7 @@
     "submit-to-blu": "node scripts/submit-to-blu.js",
     "submit-to-bikebureau": "node scripts/submit-to-bikebureau.js",
     "backfill-plates": "node scripts/backfill-plates.js",
+    "backfill-missing-history": "node scripts/backfill-missing-history.js",
     "seed-geofences": "node scripts/seed-geofences.js",
     "test": "vitest run",
     "test:watch": "vitest",

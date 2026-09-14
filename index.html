@@ -1124,13 +1124,19 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.47.1';
+        const APP_VERSION = '3.47.3';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.47.3', date: '2026-09-14', notes: [
+                'Fixed: submitting a report could silently fail to save to your history (with no error shown) if the photo\'s thumbnail failed to generate. The ticket was still filed with Improve Detroit either way -- it just wasn\'t showing up here afterward.',
+            ] },
+            { version: '3.47.2', date: '2026-09-14', notes: [
+                'The debug console now saves its full output to your account (not just error lines), so a past session can be reviewed for troubleshooting even after the tab that produced it is closed.',
+            ] },
             { version: '3.47.1', date: '2026-09-14', notes: [
                 'Photo/comment classification now starts on Gemini 3.6 Flash instead of falling back to it only after gemini-flash-latest gets overloaded -- fewer minutes-long waits during busy periods.',
             ] },
@@ -1447,14 +1453,15 @@
             return firestoreDb.collection('users').doc(uid).collection('settings');
         }
 
-        // Append-only error log (see logToConsole) -- lets a failure that
-        // happens when nobody's watching the in-app debug console (e.g. a
-        // silent addToHistory failure right after a real SeeClickFix
-        // submission) still be found later. Firestore-only, no
-        // localStorage mirror -- it needs to survive past the browser
-        // session that produced it.
-        function errorLogCollection(uid) {
-            return firestoreDb.collection('users').doc(uid).collection('errorLogs');
+        // Append-only mirror of the in-app debug console (see logToConsole)
+        // -- every line, not just errors, so a session can be fully
+        // reconstructed later even if nobody was watching the debug panel
+        // when it ran (e.g. a silent addToHistory failure right after a
+        // real SeeClickFix submission, or the events leading up to it).
+        // Firestore-only, no localStorage mirror -- it needs to survive
+        // past the browser session that produced it.
+        function consoleLogCollection(uid) {
+            return firestoreDb.collection('users').doc(uid).collection('consoleLogs');
         }
 
         // Resolves once the first Firestore history snapshot has arrived, so
@@ -1699,17 +1706,20 @@
             // tucked away behind the fly-in menu so it doesn't clutter the UI.
             if (isError) setDebugPanelVisible(true);
 
-            // Mirror errors to Firestore (users/{uid}/errorLogs) so failures
-            // that happen when nobody's watching the debug console -- e.g. a
-            // SeeClickFix submission that succeeds but whose addToHistory
-            // write then silently fails -- are still discoverable later
-            // instead of just vanishing with the tab. Best-effort and
-            // fire-and-forget: a logging failure must never throw back into
-            // whatever code path triggered the original log, and this must
-            // never block the UI the way awaiting it would.
-            if (isError && currentUid) {
-                errorLogCollection(currentUid).add({
+            // Mirror every line (not just errors) to Firestore (users/{uid}/
+            // consoleLogs) so a session's full debug output -- not just the
+            // eventual failure, but the info lines leading up to it (what
+            // was combined, what plate/USDOT got detected, timing) -- is
+            // still discoverable later, once the tab that produced it is
+            // long closed. Best-effort and fire-and-forget: a logging
+            // failure must never throw back into whatever code path
+            // triggered the original log (never call logToConsole from the
+            // .catch here, or this recurses), and this must never block the
+            // UI the way awaiting it would.
+            if (currentUid) {
+                consoleLogCollection(currentUid).add({
                     message: formattedMessage,
+                    isError,
                     loggedAt: new Date().toISOString(),
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                     url: location.href,
@@ -4933,6 +4943,21 @@
                     URL.revokeObjectURL(img.src);
                     resolve(canvas.toDataURL('image/jpeg', 0.6));
                 };
+                // Without this, a photo the <img> element fails to decode
+                // (seen in practice under memory pressure after several
+                // large photos in one session) leaves onload never firing --
+                // this promise then hangs forever with no resolve/reject,
+                // which stalls addToHistory (its very first await) silently:
+                // no Firestore write, no thrown error, no console line, and
+                // the ticket's history entry just never appears even though
+                // the SeeClickFix submission itself succeeded. A missing
+                // thumbnail is a cosmetic loss; a missing history entry
+                // isn't, so resolve with null instead of leaving this
+                // unhandled.
+                img.onerror = () => {
+                    URL.revokeObjectURL(img.src);
+                    resolve(null);
+                };
                 img.src = URL.createObjectURL(file);
             });
         }
@@ -4942,7 +4967,7 @@
         // entry -- see addToHistory's batch.commit() below, which used to
         // fall straight through to the session-only local cache on the
         // first error. Each retry is logged (and, via logToConsole's
-        // Firestore mirror, recorded in errorLogs) so a run that only
+        // Firestore mirror, recorded in consoleLogs) so a run that only
         // succeeds after retrying is still visible for troubleshooting.
         async function commitWithRetry(batch, label, attempts = 3) {
             for (let i = 0; i < attempts; i++) {

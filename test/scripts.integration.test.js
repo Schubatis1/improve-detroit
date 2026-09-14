@@ -13,6 +13,7 @@ const { backfillPlates } = require('../scripts/backfill-plates.js');
 const { seedGeofences, GEOFENCES } = require('../scripts/seed-geofences.js');
 const { tagGeofenceOnIssues } = require('../scripts/tag-geofence.js');
 const { importIssues } = require('../scripts/import-seeclickfix-history.js');
+const { backfillMissingHistory } = require('../scripts/backfill-missing-history.js');
 
 const PROJECT_ID = 'improve-detroit-scripts-integration-test';
 const UID = 'test-uid';
@@ -128,5 +129,60 @@ describe('importIssues', () => {
     it('writes nothing for an empty issue list', async () => {
         const result = await importIssues(db, UID, []);
         expect(result.written).toBe(0);
+    });
+});
+
+describe('backfillMissingHistory', () => {
+    // The bucket itself is never touched here -- uploadPhotoAndGetDownloadUrl
+    // is stubbed via `deps`, same as fetchIssue/fetchBuffer, so this doesn't
+    // need the Storage emulator. A plain object stands in for the real
+    // Storage bucket the function signature expects.
+    const fakeBucket = { name: 'fake-bucket' };
+
+    it('writes a reconstructed history doc for an issue with none yet', async () => {
+        const deps = {
+            fetchIssue: async (issueId) => ({
+                id: issueId,
+                address: '729 Meldrum St',
+                lat: 42.1,
+                lng: -83.1,
+                created_at: '2026-09-14T13:21:54-04:00',
+                status: 'Open',
+                html_url: `https://seeclickfix.com/issues/${issueId}`,
+                description: 'Truck blocking bike lane',
+                media: { image_full: 'https://example.com/full.jpg', image_square_100x100: 'https://example.com/square.jpg' },
+            }),
+            fetchBuffer: async () => Buffer.from('fake-image-bytes'),
+            uploadPhotoAndGetDownloadUrl: async () => 'https://firebasestorage.googleapis.com/fake-download-url',
+        };
+
+        const results = await backfillMissingHistory(db, fakeBucket, UID, ['999'], 'Private Owner Vehicle', deps);
+        expect(results).toEqual([{ issueId: '999', skipped: false, entry: expect.any(Object) }]);
+
+        const doc = await db.collection('users').doc(UID).collection('history').doc('999').get();
+        expect(doc.data()).toMatchObject({
+            address: '729 Meldrum St',
+            status: 'Open',
+            category: 'vehicle',
+            bluCategory: 'Private Owner Vehicle',
+            bluStatus: 'pending',
+            bikeBureauStatus: 'pending',
+            photoUrl: 'https://firebasestorage.googleapis.com/fake-download-url',
+            plate: null,
+            plateIds: [],
+        });
+    });
+
+    it('skips an issue id that already has a history doc, without touching it', async () => {
+        await db.collection('users').doc(UID).collection('history').doc('111').set({ address: 'already here', plate: 'XYZ123' });
+        const deps = {
+            fetchIssue: async () => { throw new Error('should not be called for an existing doc'); },
+        };
+
+        const results = await backfillMissingHistory(db, fakeBucket, UID, ['111'], 'Private Owner Vehicle', deps);
+        expect(results).toEqual([{ issueId: '111', skipped: true }]);
+
+        const doc = await db.collection('users').doc(UID).collection('history').doc('111').get();
+        expect(doc.data()).toMatchObject({ address: 'already here', plate: 'XYZ123' });
     });
 });
