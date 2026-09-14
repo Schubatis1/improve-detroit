@@ -1124,13 +1124,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.47.2';
+        const APP_VERSION = '3.47.3';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.47.3', date: '2026-09-14', notes: [
+                'Fixed: submitting a report could silently fail to save to your history (with no error shown) if the photo\'s thumbnail failed to generate. The ticket was still filed with Improve Detroit either way -- it just wasn\'t showing up here afterward.',
+            ] },
             { version: '3.47.2', date: '2026-09-14', notes: [
                 'The debug console now saves its full output to your account (not just error lines), so a past session can be reviewed for troubleshooting even after the tab that produced it is closed.',
             ] },
@@ -4939,6 +4942,21 @@
                     ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
                     URL.revokeObjectURL(img.src);
                     resolve(canvas.toDataURL('image/jpeg', 0.6));
+                };
+                // Without this, a photo the <img> element fails to decode
+                // (seen in practice under memory pressure after several
+                // large photos in one session) leaves onload never firing --
+                // this promise then hangs forever with no resolve/reject,
+                // which stalls addToHistory (its very first await) silently:
+                // no Firestore write, no thrown error, no console line, and
+                // the ticket's history entry just never appears even though
+                // the SeeClickFix submission itself succeeded. A missing
+                // thumbnail is a cosmetic loss; a missing history entry
+                // isn't, so resolve with null instead of leaving this
+                // unhandled.
+                img.onerror = () => {
+                    URL.revokeObjectURL(img.src);
+                    resolve(null);
                 };
                 img.src = URL.createObjectURL(file);
             });
