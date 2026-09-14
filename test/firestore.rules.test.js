@@ -60,7 +60,7 @@ async function seedAsAdmin(docPath, data) {
 // the exact same owner-only read/write rule -- history, plates,
 // usdotNumbers, companies, geofences, parkingDeptLetters, settings. Table-
 // test them all the same way instead of writing near-identical blocks 7
-// times; errorLogs (create-only, no update/delete) and config (read-only)
+// times; consoleLogs (create-only, no update/delete) and config (read-only)
 // get their own dedicated describe blocks below since their rules differ.
 const OWNER_ONLY_COLLECTIONS = [
     'history', 'plates', 'usdotNumbers', 'companies', 'geofences', 'parkingDeptLetters', 'settings',
@@ -118,31 +118,31 @@ describe('users/{uid} (the user doc itself)', () => {
     });
 });
 
-describe('users/{uid}/errorLogs/{logId} (append-only audit trail)', () => {
+describe('users/{uid}/consoleLogs/{logId} (append-only audit trail)', () => {
     it('the owner can create and read', async () => {
         const db = ownerAuth();
-        const ref = db.doc(`users/${OWNER_UID}/errorLogs/log1`);
+        const ref = db.doc(`users/${OWNER_UID}/consoleLogs/log1`);
         await assertSucceeds(ref.set({ message: 'oops' }));
         await assertSucceeds(ref.get());
     });
 
     it('the owner cannot update an existing log entry', async () => {
-        await seedAsAdmin(`users/${OWNER_UID}/errorLogs/log1`, { message: 'original' });
+        await seedAsAdmin(`users/${OWNER_UID}/consoleLogs/log1`, { message: 'original' });
 
         const db = ownerAuth();
-        await assertFails(db.doc(`users/${OWNER_UID}/errorLogs/log1`).set({ message: 'edited' }, { merge: true }));
+        await assertFails(db.doc(`users/${OWNER_UID}/consoleLogs/log1`).set({ message: 'edited' }, { merge: true }));
     });
 
     it('the owner cannot delete a log entry', async () => {
-        await seedAsAdmin(`users/${OWNER_UID}/errorLogs/log1`, { message: 'original' });
+        await seedAsAdmin(`users/${OWNER_UID}/consoleLogs/log1`, { message: 'original' });
 
         const db = ownerAuth();
-        await assertFails(db.doc(`users/${OWNER_UID}/errorLogs/log1`).delete());
+        await assertFails(db.doc(`users/${OWNER_UID}/consoleLogs/log1`).delete());
     });
 
     it('another user cannot create a log entry under the owner\'s uid', async () => {
         const db = otherUserAuth();
-        await assertFails(db.doc(`users/${OWNER_UID}/errorLogs/log1`).set({ message: 'hijack' }));
+        await assertFails(db.doc(`users/${OWNER_UID}/consoleLogs/log1`).set({ message: 'hijack' }));
     });
 });
 

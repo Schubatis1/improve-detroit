@@ -90,12 +90,14 @@ service cloud.firestore {
         && request.auth.token.email_verified == true;
     }
 
-    // Append-only error log (see index.html's logToConsole/errorLogCollection)
-    // -- lets a failure that happens when nobody's watching the in-app debug
-    // console still be found later. Create/read only, no update/delete: it's
-    // meant as a durable audit trail, not a doc the client should ever
-    // rewrite in place. Same owner-only restriction as history/plates above.
-    match /users/{uid}/errorLogs/{logId} {
+    // Append-only mirror of the in-app debug console (see index.html's
+    // logToConsole/consoleLogCollection) -- every line, not just errors, so
+    // a session can be fully reconstructed later even if nobody was
+    // watching the debug panel when it ran. Create/read only, no
+    // update/delete: it's meant as a durable audit trail, not a doc the
+    // client should ever rewrite in place. Same owner-only restriction as
+    // history/plates above.
+    match /users/{uid}/consoleLogs/{logId} {
       allow read, create: if request.auth != null
         && request.auth.uid == uid
         && request.auth.token.email == 'aschubatis@gmail.com'
