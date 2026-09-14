@@ -13,9 +13,16 @@
  * plate/vehicle/company/USDOT text that would have been typed into the
  * report card, since SeeClickFix's public API doesn't expose the answer
  * text and the original browser session is long gone. Those fields are
- * left empty rather than guessed. bluCategory similarly falls back to the
- * same default the app itself uses when nothing more specific is known
- * (config.js's bluCategories[0]).
+ * left empty rather than guessed. bluCategory similarly falls back to a
+ * generic default per category (see VEHICLE/OTHER _BLU_CATEGORY_FALLBACK
+ * below) when nothing more specific is known.
+ *
+ * category ('vehicle' vs 'other') is recovered reliably, though: the app
+ * always routes 'other' reports (debris/pothole/damaged-lane bike lane
+ * issues) through a different SeeClickFix request type than 'vehicle'
+ * reports (see index.html's submitItem and config.js's potholeRequestTypeId
+ * vs seeClickFix.requestTypeId) -- so the issue's own request_type.id
+ * tells us which branch created it.
  *
  * The photo itself is re-hosted: downloaded from SeeClickFix's CDN and
  * re-uploaded to Firebase Storage at history/{uid}/{issueId}.jpg, with a
@@ -38,6 +45,27 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const admin = require('firebase-admin');
+
+// Mirrors config.js's seeClickFix.requestTypeId / potholeRequestTypeId --
+// duplicated here (not required from config.js) since that file attaches
+// to `window` and isn't loadable from Node. If those ever change in
+// config.js, update here too.
+const VEHICLE_REQUEST_TYPE_ID = '22880';
+const POTHOLE_REQUEST_TYPE_ID = '7047';
+
+// Same fallbacks the live app uses when nothing more specific is known --
+// bluCategories[0] for 'vehicle' (index.html:1645), and applyOtherClassification's
+// own default description fallback category for 'other' (index.html:3130).
+const VEHICLE_BLU_CATEGORY_FALLBACK = 'Private Owner Vehicle';
+const OTHER_BLU_CATEGORY_FALLBACK = 'Other  (damaged lane / snow / debris / pedestrian / etc.)';
+
+function categoryForIssue(issue) {
+    const requestTypeId = issue.request_type ? String(issue.request_type.id) : null;
+    if (requestTypeId !== VEHICLE_REQUEST_TYPE_ID && requestTypeId !== POTHOLE_REQUEST_TYPE_ID) {
+        console.warn(`#${issue.id}: unexpected request_type.id ${requestTypeId} (not this app's vehicle or pothole type) -- this issue may not have been filed by this app. Defaulting to category "vehicle".`);
+    }
+    return requestTypeId === POTHOLE_REQUEST_TYPE_ID ? 'other' : 'vehicle';
+}
 
 function parseArgs(argv) {
     const args = { email: 'aschubatis@gmail.com' };
@@ -74,7 +102,8 @@ async function uploadPhotoAndGetDownloadUrl(bucket, uid, issueId, buffer) {
     return `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${token}`;
 }
 
-function toHistoryEntry(issue, photoUrl, thumbnail, fallbackBluCategory) {
+function toHistoryEntry(issue, photoUrl, thumbnail) {
+    const category = categoryForIssue(issue);
     return {
         thumbnail,
         address: issue.address || '',
@@ -93,8 +122,8 @@ function toHistoryEntry(issue, photoUrl, thumbnail, fallbackBluCategory) {
         usdotNumber: null,
         usdotIds: [],
         photoTakenAt: null,
-        bluCategory: fallbackBluCategory,
-        category: 'vehicle',
+        bluCategory: category === 'other' ? OTHER_BLU_CATEGORY_FALLBACK : VEHICLE_BLU_CATEGORY_FALLBACK,
+        category,
         description: issue.description || '',
         bluStatus: 'pending',
         bikeBureauStatus: 'pending',
@@ -109,7 +138,7 @@ function toHistoryEntry(issue, photoUrl, thumbnail, fallbackBluCategory) {
 
 // Split out from main() so it's testable without real network/Storage
 // access -- see test/scripts.integration.test.js.
-async function backfillMissingHistory(db, bucket, uid, issueIds, fallbackBluCategory, deps = {}) {
+async function backfillMissingHistory(db, bucket, uid, issueIds, deps = {}) {
     const doFetchIssue = deps.fetchIssue || fetchIssue;
     const doFetchBuffer = deps.fetchBuffer || fetchBuffer;
     const doUpload = deps.uploadPhotoAndGetDownloadUrl || uploadPhotoAndGetDownloadUrl;
@@ -143,7 +172,7 @@ async function backfillMissingHistory(db, bucket, uid, issueIds, fallbackBluCate
             thumbnail = `data:image/jpeg;base64,${thumbBuffer.toString('base64')}`;
         }
 
-        const entry = toHistoryEntry(issue, photoUrl, thumbnail, fallbackBluCategory);
+        const entry = toHistoryEntry(issue, photoUrl, thumbnail);
         await docRef.set(entry);
         console.log(`#${issueId}: history doc written (${entry.address}).`);
         results.push({ issueId, skipped: false, entry });
@@ -171,11 +200,8 @@ async function main() {
     const issueIds = args['issue-ids'].split(',').map((s) => s.trim()).filter(Boolean);
     const db = admin.firestore();
     const bucket = admin.storage().bucket();
-    // Same fallback the live app uses (config.js's bluCategories[0]) when
-    // nothing more specific is known -- see index.html:1645.
-    const fallbackBluCategory = 'Private Owner Vehicle';
 
-    await backfillMissingHistory(db, bucket, user.uid, issueIds, fallbackBluCategory);
+    await backfillMissingHistory(db, bucket, user.uid, issueIds);
 }
 
 if (require.main === module) {
@@ -185,4 +211,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { parseArgs, fetchIssue, fetchBuffer, uploadPhotoAndGetDownloadUrl, toHistoryEntry, backfillMissingHistory };
+module.exports = { parseArgs, fetchIssue, fetchBuffer, uploadPhotoAndGetDownloadUrl, categoryForIssue, toHistoryEntry, backfillMissingHistory };

@@ -139,24 +139,30 @@ describe('backfillMissingHistory', () => {
     // Storage bucket the function signature expects.
     const fakeBucket = { name: 'fake-bucket' };
 
-    it('writes a reconstructed history doc for an issue with none yet', async () => {
+    function fakeIssue(issueId, requestTypeId, overrides = {}) {
+        return {
+            id: issueId,
+            address: '729 Meldrum St',
+            lat: 42.1,
+            lng: -83.1,
+            created_at: '2026-09-14T13:21:54-04:00',
+            status: 'Open',
+            html_url: `https://seeclickfix.com/issues/${issueId}`,
+            description: 'Truck blocking bike lane',
+            request_type: { id: requestTypeId },
+            media: { image_full: 'https://example.com/full.jpg', image_square_100x100: 'https://example.com/square.jpg' },
+            ...overrides,
+        };
+    }
+
+    it('writes a reconstructed "vehicle" history doc for an issue filed under the vehicle request type', async () => {
         const deps = {
-            fetchIssue: async (issueId) => ({
-                id: issueId,
-                address: '729 Meldrum St',
-                lat: 42.1,
-                lng: -83.1,
-                created_at: '2026-09-14T13:21:54-04:00',
-                status: 'Open',
-                html_url: `https://seeclickfix.com/issues/${issueId}`,
-                description: 'Truck blocking bike lane',
-                media: { image_full: 'https://example.com/full.jpg', image_square_100x100: 'https://example.com/square.jpg' },
-            }),
+            fetchIssue: async (issueId) => fakeIssue(issueId, 22880),
             fetchBuffer: async () => Buffer.from('fake-image-bytes'),
             uploadPhotoAndGetDownloadUrl: async () => 'https://firebasestorage.googleapis.com/fake-download-url',
         };
 
-        const results = await backfillMissingHistory(db, fakeBucket, UID, ['999'], 'Private Owner Vehicle', deps);
+        const results = await backfillMissingHistory(db, fakeBucket, UID, ['999'], deps);
         expect(results).toEqual([{ issueId: '999', skipped: false, entry: expect.any(Object) }]);
 
         const doc = await db.collection('users').doc(UID).collection('history').doc('999').get();
@@ -173,13 +179,30 @@ describe('backfillMissingHistory', () => {
         });
     });
 
+    it('writes a reconstructed "other" history doc for an issue filed under the pothole request type', async () => {
+        const deps = {
+            fetchIssue: async (issueId) => fakeIssue(issueId, 7047, { description: 'Road work sign fell into bike lane' }),
+            fetchBuffer: async () => Buffer.from('fake-image-bytes'),
+            uploadPhotoAndGetDownloadUrl: async () => 'https://firebasestorage.googleapis.com/fake-download-url',
+        };
+
+        const results = await backfillMissingHistory(db, fakeBucket, UID, ['888'], deps);
+        expect(results).toEqual([{ issueId: '888', skipped: false, entry: expect.any(Object) }]);
+
+        const doc = await db.collection('users').doc(UID).collection('history').doc('888').get();
+        expect(doc.data()).toMatchObject({
+            category: 'other',
+            bluCategory: 'Other  (damaged lane / snow / debris / pedestrian / etc.)',
+        });
+    });
+
     it('skips an issue id that already has a history doc, without touching it', async () => {
         await db.collection('users').doc(UID).collection('history').doc('111').set({ address: 'already here', plate: 'XYZ123' });
         const deps = {
             fetchIssue: async () => { throw new Error('should not be called for an existing doc'); },
         };
 
-        const results = await backfillMissingHistory(db, fakeBucket, UID, ['111'], 'Private Owner Vehicle', deps);
+        const results = await backfillMissingHistory(db, fakeBucket, UID, ['111'], deps);
         expect(results).toEqual([{ issueId: '111', skipped: true }]);
 
         const doc = await db.collection('users').doc(UID).collection('history').doc('111').get();
