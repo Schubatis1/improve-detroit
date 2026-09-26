@@ -37,7 +37,7 @@
          file -- bump it (matching APP_VERSION below) whenever config.js or
          this file changes, so a browser that loaded the page just before a
          deploy doesn't keep running stale config after a normal refresh. -->
-    <script src="config.js?v=3.46.0"></script>
+    <script src="config.js?v=3.48.0"></script>
     <!-- Firebase (compat build, so it works as a plain global like the rest
          of this no-build page) -- syncs submission history to Firestore. -->
     <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -1124,13 +1124,16 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.47.4';
+        const APP_VERSION = '3.48.0';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.48.0', date: '2026-09-26', notes: [
+                'When a license plate is detected, the zoomed-in photo with the plate boxed out is now also posted to the Improve Detroit ticket as a comment photo, alongside any other secondary photos.',
+            ] },
             { version: '3.47.4', date: '2026-09-14', notes: [
                 'Fixed a second way a submitted report could silently disappear from history: if saving it to your account failed and it fell back to showing locally-only, it could then get wiped out by the very next report syncing successfully. It now stays visible until it actually syncs.',
             ] },
@@ -3563,6 +3566,16 @@
                 ctx.strokeRect((boxX - cropX) * scale, (boxY - cropY) * scale, boxW * scale, boxH * scale);
 
                 item.els.plateCropWrap.classList.remove('hidden');
+
+                // Keep a JPEG of this exact boxed crop so submitItem can post
+                // it to the ticket as a follow-up comment photo, the same way
+                // a combined report's extra photos go up -- lets the City see
+                // the plate without having to zoom into the full photo.
+                canvas.toBlob((blob) => {
+                    if (!blob) return;
+                    const baseName = item.file.name.replace(/\.[^.]+$/, '');
+                    item.plateCropFile = new File([blob], `${baseName}-plate.jpg`, { type: 'image/jpeg' });
+                }, 'image/jpeg', 0.9);
             };
             img.onerror = () => {}; // best-effort -- the plate text field/note still work without this
             img.src = item.previewUrl;
@@ -3945,13 +3958,17 @@
                 // primary's here (see combineReports) rather than
                 // discarding them -- post them back as one follow-up
                 // comment so a combined report doesn't silently lose all
-                // but its main photo. Purely additive: any failure here
-                // only logs, it never touches item.status (see the note
-                // above about never downgrading a successful submission).
-                if (item.extraFiles && item.extraFiles.length) {
+                // but its main photo. The boxed-out plate crop(s) from
+                // Plate Recognizer (see renderPlateCrop) ride along in the
+                // same comment. Purely additive: any failure here only
+                // logs, it never touches item.status (see the note above
+                // about never downgrading a successful submission).
+                const plateCropFiles = item.plateCropFiles || (item.plateCropFile ? [item.plateCropFile] : []);
+                const commentFiles = [...(item.extraFiles || []), ...plateCropFiles];
+                if (commentFiles.length) {
                     try {
                         const locations = [];
-                        for (const file of item.extraFiles.slice(0, 9)) {
+                        for (const file of commentFiles.slice(0, 9)) {
                             const uploaded = await uploadTransientFile(await ensureUploadSafeSize(file), file.name);
                             locations.push(uploaded.location);
                         }
@@ -4017,6 +4034,9 @@
                 // follow-up comment on the issue once it's created. See
                 // uploadTransientFile/postIssueCommentWithPhotos.
                 extraFiles: sourceItems.slice(1).map((item) => item.file),
+                // Each source photo's boxed plate crop (see renderPlateCrop),
+                // posted in that same follow-up comment.
+                plateCropFiles: sourceItems.map((item) => item.plateCropFile).filter(Boolean),
                 previewUrl: primary.previewUrl,
                 status: 'ready',
                 category: 'vehicle',
