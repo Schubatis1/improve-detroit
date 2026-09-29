@@ -132,7 +132,7 @@ function toHistoryEntry(issue, photoUrl, thumbnail) {
         // written live by addToHistory, in case that distinction ever
         // matters for troubleshooting later.
         backfilledAt: new Date().toISOString(),
-        backfilledReason: 'makeThumbnail hung with no onerror handler -- see index.html 3.47.3 release notes',
+        backfilledReason: 'ticket filed but addToHistory never wrote its history doc (see index.html 3.47.3 / 3.48.1 release notes)',
     };
 }
 
@@ -182,13 +182,17 @@ async function backfillMissingHistory(db, bucket, uid, issueIds, deps = {}) {
 
 async function main() {
     const args = parseArgs(process.argv.slice(2));
-    if (!args['service-account'] || !args['issue-ids']) {
-        console.error('Usage: node scripts/backfill-missing-history.js --service-account <key.json> --issue-ids 123,456 [--email you@example.com]');
+    if ((!args['service-account'] && !process.env.FIREBASE_SERVICE_ACCOUNT_JSON) || !args['issue-ids']) {
+        console.error('Usage: node scripts/backfill-missing-history.js (--service-account <key.json> | FIREBASE_SERVICE_ACCOUNT_JSON env) --issue-ids 123,456 [--email you@example.com]');
         process.exit(1);
     }
 
-    const serviceAccountPath = path.resolve(args['service-account']);
-    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+    // FIREBASE_SERVICE_ACCOUNT_JSON lets this run from GitHub Actions (see
+    // .github/workflows/backfill-missing-history.yml), same as the BLU/Bike
+    // Bureau submitters.
+    const serviceAccount = args['service-account']
+        ? JSON.parse(fs.readFileSync(path.resolve(args['service-account']), 'utf8'))
+        : JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
     admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
         storageBucket: 'improve-detroit.firebasestorage.app',

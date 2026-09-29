@@ -1,0 +1,30 @@
+name: Backfill missing history entries
+
+# On-demand recovery for SeeClickFix tickets that were filed by the app but
+# never made it into Submission History -- see
+# scripts/backfill-missing-history.js. Idempotent: ids that already have a
+# history doc are skipped.
+on:
+  workflow_dispatch:
+    inputs:
+      issue_ids:
+        description: 'Comma-separated SeeClickFix issue ids (e.g. 22895506,22895478)'
+        required: true
+        type: string
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - run: node scripts/backfill-missing-history.js --issue-ids "$ISSUE_IDS"
+        env:
+          ISSUE_IDS: ${{ inputs.issue_ids }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}

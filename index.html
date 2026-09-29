@@ -1132,6 +1132,7 @@
         // anything user-visible.
         const RELEASE_NOTES = [
             { version: '3.48.1', date: '2026-09-29', notes: [
+                'Fixed: a submitted report could silently never show up in your history if the full-size photo upload stalled or the app was closed right after "Submitted". The history entry is now saved first (and kept on this device until it syncs), with the photo uploaded afterward.',
                 'Fixed: if Improve Detroit briefly rate-limited the app (e.g. while Refresh All was running), a detected license plate could be silently left off the submitted ticket. Those lookups now retry, and the plate question is re-checked at submit time.',
                 'Refresh All now paces itself between reports, and photo-only comments show as "(photo)" instead of logging a warning.',
             ] },
@@ -4200,6 +4201,7 @@
                         cacheHistoryLocally();
                         renderHistory();
                         resolveHistoryReady();
+                        syncUnsyncedHistory(currentUid);
                     },
                     (err) => {
                         logToConsole(`Firestore history sync error: ${err instanceof Error ? err.message : err}`, true);
@@ -5141,17 +5143,31 @@
                     parkingDeptMatchMethod: 'proactive',
                 } : {}),
             };
+            // The history doc is written BEFORE the full-size photo upload,
+            // not after it. That upload is a multi-MB transfer that can
+            // stall for minutes on mobile (or never finish if the tab is
+            // backgrounded/closed right after "Submitted ✓"), and while it
+            // was first in line the ticket got filed but its history entry
+            // silently never got written. bluStatus/bikeBureauStatus start
+            // as 'awaiting-photo' (which the scheduled submitters ignore --
+            // they only pick up 'pending') and flip to 'pending' once
+            // photoUrl is actually set below.
+            entry.bluStatus = 'awaiting-photo';
+            entry.bikeBureauStatus = 'awaiting-photo';
+
+            // Show it (and persist it to localStorage) immediately, marked
+            // _localOnly, so even a tab killed mid-write keeps the entry --
+            // syncUnsyncedHistory retries it into Firestore on next load.
+            // The synced copy replaces this once onSnapshot delivers it.
+            const localEntry = { issueId: String(issueId), _localOnly: true, ...entry };
+            historyCache = [localEntry, ...historyCache.filter((e) => String(e.issueId) !== String(issueId))];
+            cacheHistoryLocally();
+            renderHistory();
+
+            let uid = null;
+            let docWritten = false;
             try {
-                const uid = currentUid || await historySignedIn;
-                try {
-                    const photoRef = firebaseStorage.ref(`history/${uid}/${issueId}.jpg`);
-                    await photoRef.put(item.file);
-                    entry.photoUrl = await photoRef.getDownloadURL();
-                } catch (photoErr) {
-                    logToConsole(`Could not upload full-size photo for #${issueId} to Storage -- BLU/Bike Bureau auto-submit will skip this report: ${photoErr instanceof Error ? photoErr.message : photoErr}`, true);
-                    entry.bluStatus = 'photo-upload-failed';
-                    entry.bikeBureauStatus = 'photo-upload-failed';
-                }
+                uid = currentUid || await historySignedIn;
 
                 // History doc and its plates-index entries are written
                 // together so the index (see platesCollection/platesCache)
@@ -5176,6 +5192,7 @@
                     }, { merge: true });
                 }
                 await commitWithRetry(batch, `Submission #${issueId}`);
+                docWritten = true;
                 // onSnapshot picks both up and calls renderHistory()/renderOffenders() itself.
             } catch (err) {
                 logToConsole(`Could not sync submission #${issueId} to Firestore after retrying -- showing it locally until it syncs: ${err instanceof Error ? err.message : err}`, true);
@@ -5188,8 +5205,6 @@
                 // a batch of photos creates. Never written to Firestore
                 // itself (batch.set above already failed); purely a local
                 // marker.
-                historyCache.unshift({ issueId, _localOnly: true, ...entry });
-                cacheHistoryLocally();
                 for (const plateId of plateIds) {
                     let plateEntry = platesCache.find((p) => p.id === plateId);
                     if (!plateEntry) {
@@ -5220,6 +5235,58 @@
                 }
                 cacheCompaniesLocally();
                 renderHistory();
+            }
+
+            // Now the (slow, best-effort) full-size photo for the scheduled
+            // BLU/Bike Bureau mirroring -- downscaled first, same as the
+            // SeeClickFix upload, so it's ~1-2MB instead of up to ~10MB.
+            let photoFields;
+            try {
+                if (!uid) uid = currentUid || await historySignedIn;
+                const photoRef = firebaseStorage.ref(`history/${uid}/${issueId}.jpg`);
+                await photoRef.put(await ensureUploadSafeSize(item.file), { contentType: 'image/jpeg' });
+                photoFields = { photoUrl: await photoRef.getDownloadURL(), bluStatus: 'pending', bikeBureauStatus: 'pending' };
+            } catch (photoErr) {
+                logToConsole(`Could not upload full-size photo for #${issueId} to Storage -- BLU/Bike Bureau auto-submit will skip this report: ${photoErr instanceof Error ? photoErr.message : photoErr}`, true);
+                photoFields = { bluStatus: 'photo-upload-failed', bikeBureauStatus: 'photo-upload-failed' };
+            }
+            Object.assign(entry, photoFields);
+            Object.assign(localEntry, photoFields);
+            if (docWritten) {
+                try {
+                    await historyCollection(uid).doc(String(issueId)).update(photoFields);
+                } catch (err) {
+                    logToConsole(`Could not record photo upload for #${issueId} in Firestore: ${err instanceof Error ? err.message : err}`, true);
+                }
+            } else {
+                cacheHistoryLocally();
+                renderHistory();
+            }
+        }
+
+        // Retries the Firestore write for any history entry still marked
+        // _localOnly -- i.e. a submission whose history write failed or was
+        // cut off (tab closed mid-submit) in an earlier session, and so
+        // only survived in this device's localStorage. Runs once per load,
+        // after the first snapshot. An entry still 'awaiting-photo' here
+        // lost its photo upload with that session (the File is gone), so
+        // it's marked 'photo-upload-failed' rather than left pending
+        // forever.
+        let unsyncedHistoryRetried = false;
+        async function syncUnsyncedHistory(uid) {
+            if (unsyncedHistoryRetried) return;
+            unsyncedHistoryRetried = true;
+            const pending = historyCache.filter((e) => e._localOnly);
+            for (const e of pending) {
+                const { issueId, _localOnly, ...fields } = e;
+                if (fields.bluStatus === 'awaiting-photo') fields.bluStatus = 'photo-upload-failed';
+                if (fields.bikeBureauStatus === 'awaiting-photo') fields.bikeBureauStatus = 'photo-upload-failed';
+                try {
+                    await historyCollection(uid).doc(String(issueId)).set(fields, { merge: true });
+                    logToConsole(`Synced previously local-only report #${issueId} to your history.`);
+                } catch (err) {
+                    logToConsole(`Still could not sync local-only report #${issueId}: ${err instanceof Error ? err.message : err}`, true);
+                }
             }
         }
 
