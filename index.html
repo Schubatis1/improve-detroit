@@ -1124,13 +1124,17 @@
         // API keys/IDs, geofences, and message pools all live in config.js
         // (loaded above as window.APP_CONFIG) -- edit that file to
         // customize behavior instead of this one.
-        const APP_VERSION = '3.48.0';
+        const APP_VERSION = '3.48.1';
         const CONFIG = window.APP_CONFIG;
 
         // Shown on the Release Notes screen (hamburger menu). Newest first.
         // Hand-maintained -- bump this alongside APP_VERSION when shipping
         // anything user-visible.
         const RELEASE_NOTES = [
+            { version: '3.48.1', date: '2026-09-29', notes: [
+                'Fixed: if Improve Detroit briefly rate-limited the app (e.g. while Refresh All was running), a detected license plate could be silently left off the submitted ticket. Those lookups now retry, and the plate question is re-checked at submit time.',
+                'Refresh All now paces itself between reports, and photo-only comments show as "(photo)" instead of logging a warning.',
+            ] },
             { version: '3.48.0', date: '2026-09-26', notes: [
                 'When a license plate is detected, the zoomed-in photo with the plate boxed out is now also posted to the Improve Detroit ticket as a comment photo, alongside any other secondary photos.',
             ] },
@@ -1600,6 +1604,33 @@
                 ...init,
                 headers: { ...(init.headers || {}), 'Authorization': `Bearer ${idToken}` },
             });
+        }
+
+        // proxyFetch plus retry-with-backoff (2s, 4s, 6s) on a 429 or a
+        // network-level failure ("Load failed", no HTTP status). SeeClickFix
+        // rate-limits bursts -- e.g. Refresh All running while a photo's
+        // question schema is being fetched -- and without this a single 429
+        // on the schema fetch silently dropped the plate from the ticket.
+        // Returns the final Response (possibly still !ok) for the caller to
+        // judge; throws only if every attempt failed at the network level.
+        async function proxyFetchWithRetry(targetUrl, init = {}, label = 'proxy', maxAttempts = 4) {
+            let response;
+            let lastErr;
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                    response = await proxyFetch(targetUrl, init);
+                    lastErr = null;
+                } catch (err) {
+                    lastErr = err;
+                    response = null;
+                }
+                const shouldRetry = (response && response.status === 429) || (!response && lastErr);
+                if (!shouldRetry || attempt === maxAttempts) break;
+                logToConsole(`${label}: proxy ${response ? 'rate-limited (429)' : `request failed (${lastErr instanceof Error ? lastErr.message : lastErr})`} -- retrying in ${attempt * 2}s (attempt ${attempt + 1}/${maxAttempts})...`);
+                await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+            }
+            if (!response) throw lastErr;
+            return response;
         }
 
         // distanceMeters/pointInPolygon/polygonCentroid/geofenceContainsPoint/
@@ -2559,7 +2590,14 @@
         const requestTypeSchemaCache = new Map();
         function getRequestTypeSchema(requestTypeId) {
             if (!requestTypeSchemaCache.has(requestTypeId)) {
-                requestTypeSchemaCache.set(requestTypeId, fetchRequestTypeSchema(requestTypeId));
+                // A failed fetch (null) is evicted rather than cached, so the
+                // next photo -- or submit time, see submitItem -- tries again
+                // instead of every card this session inheriting the failure.
+                const pending = fetchRequestTypeSchema(requestTypeId).then((schema) => {
+                    if (!schema) requestTypeSchemaCache.delete(requestTypeId);
+                    return schema;
+                });
+                requestTypeSchemaCache.set(requestTypeId, pending);
             }
             return requestTypeSchemaCache.get(requestTypeId);
         }
@@ -2568,7 +2606,7 @@
             try {
                 logToConsole(`Fetching question schema for request type ${requestTypeId}...`);
                 const targetUrl = `https://seeclickfix.com/api/v2/request_types/${requestTypeId}`;
-                const response = await proxyFetch(targetUrl);
+                const response = await proxyFetchWithRetry(targetUrl, {}, `Schema ${requestTypeId}`);
                 if (!response.ok) {
                     throw new Error(`Schema fetch failed: ${response.status}`);
                 }
@@ -3888,6 +3926,14 @@
                 formData.append('request_type_id', CONFIG.seeClickFix.requestTypeId);
                 formData.append(`answers[${CONFIG.seeClickFix.natureQuestionId}]`, nature);
                 formData.append(`answers[${CONFIG.seeClickFix.timingQuestionId}]`, timing);
+                if (!item.vehicleQuestionId && vehicleAndPlate) {
+                    // Schema was unavailable when the card was built (e.g. a
+                    // 429) -- try once more now rather than dropping the plate.
+                    item.vehicleQuestionId = getVehicleInfoQuestionId(await getRequestTypeSchema(CONFIG.seeClickFix.requestTypeId));
+                    if (!item.vehicleQuestionId) {
+                        logToConsole(`[${item.file.name}] Vehicle/plate question still unavailable -- submitting without "${vehicleAndPlate}".`, true);
+                    }
+                }
                 if (item.vehicleQuestionId && vehicleAndPlate) {
                     formData.append(`answers[${item.vehicleQuestionId}]`, vehicleAndPlate);
                 }
@@ -6017,7 +6063,7 @@
         // callers decide what "couldn't check this one" means for them.
         async function fetchIssueStatus(issueId) {
             const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}`;
-            const response = await proxyFetch(targetUrl);
+            const response = await proxyFetchWithRetry(targetUrl, {}, `[status] Issue #${issueId}`);
             if (!response.ok) {
                 throw new Error(`Status check failed: ${response.status}`);
             }
@@ -6093,6 +6139,10 @@
                 } catch (err) {
                     logToConsole(`Refresh All: could not refresh comments for #${entry.issueId}: ${err instanceof Error ? err.message : err}`, true);
                 }
+                // Brief pause between issues so a long history doesn't burst
+                // past SeeClickFix's rate limit (and starve any photo being
+                // processed at the same time of its own schema/status calls).
+                if (i < entries.length - 1) await new Promise((resolve) => setTimeout(resolve, 750));
             }
             statusEl.textContent = `Done -- ${statusOk}/${entries.length} statuses, ${commentsOk}/${entries.length} comment threads refreshed.`;
             logToConsole(`Refresh All complete: ${statusOk}/${entries.length} statuses, ${commentsOk}/${entries.length} comment threads.`);
@@ -6162,10 +6212,6 @@
 
         // --- SeeClickFix comment fetch/post -------------------------------
 
-        // Logged once so the real field names can be confirmed/corrected
-        // quickly if they differ from the guesses in normalizeComment().
-        let commentsShapeLogged = false;
-
         // Notify Parking Dept's Search can burn through 100+ issues in a
         // single run (see searchParkingDeptCandidates), which can still
         // trip SeeClickFix's own rate limit (429) or hit a dropped request
@@ -6179,32 +6225,11 @@
         // function -- see api/proxy.js.)
         async function fetchIssueCommentsPage(issueId, page = 1, perPage = 100) {
             const targetUrl = `https://seeclickfix.com/api/v2/issues/${issueId}/comments?page=${page}&per_page=${perPage}`;
-            const maxAttempts = 4;
-            let response;
-            let lastErr;
-            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                try {
-                    response = await proxyFetch(targetUrl);
-                    lastErr = null;
-                } catch (err) {
-                    lastErr = err; // network-level failure (e.g. "Load failed") -- treat as retryable too
-                    response = null;
-                }
-                const shouldRetry = (response && response.status === 429) || (!response && lastErr);
-                if (!shouldRetry || attempt === maxAttempts) break;
-                logToConsole(`[comments] Issue #${issueId}: proxy ${response ? `rate-limited (429)` : `request failed (${lastErr instanceof Error ? lastErr.message : lastErr})`} -- retrying in ${attempt * 2}s (attempt ${attempt + 1}/${maxAttempts})...`);
-                await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
-            }
-            if (!response) throw lastErr;
+            const response = await proxyFetchWithRetry(targetUrl, {}, `[comments] Issue #${issueId}`);
             if (!response.ok) {
                 throw new Error(`Comments fetch failed: ${response.status}`);
             }
-            const data = await response.json();
-            if (!commentsShapeLogged) {
-                commentsShapeLogged = true;
-                logToConsole(`[comments] Raw response shape for issue #${issueId} (first page, truncated): ${JSON.stringify(data).slice(0, 1000)}`);
-            }
-            return data;
+            return response.json();
         }
 
         let commentFieldWarningLogged = false;
@@ -6217,7 +6242,10 @@
         function normalizeComment(raw) {
             const text = raw.comment ?? raw.text ?? raw.body ?? raw.message ?? '';
             const createdAt = raw.created_at ?? raw.createdAt ?? raw.updated_at ?? null;
-            if (!text && !commentFieldWarningLogged) {
+            // Confirmed live: text is in `comment`, and it's legitimately ""
+            // on a photo-only comment -- only warn if no known field exists.
+            const hasTextField = ['comment', 'text', 'body', 'message'].some((k) => k in raw);
+            if (!hasTextField && !commentFieldWarningLogged) {
                 commentFieldWarningLogged = true;
                 logToConsole(`[comments] Could not find comment text in a known field -- raw object: ${JSON.stringify(raw).slice(0, 500)}`, true);
             }
@@ -6263,6 +6291,7 @@
                     createdAt: c.createdAt,
                     commenterName: (c.raw && c.raw.commenter && c.raw.commenter.name) || null,
                     commenterRole: (c.raw && c.raw.commenter && c.raw.commenter.role) || null,
+                    hasPhoto: !!(c.raw && c.raw.media && c.raw.media.image_full),
                 }))
                 .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
             await historyCollection(uid).doc(String(entry.issueId)).update({
@@ -6281,7 +6310,7 @@
                 <div class="border-b border-slate-100 last:border-0 py-2">
                     <p class="text-[10px] font-bold text-detroit-navy uppercase">${escapeHtml(c.commenterName || 'Unknown')}${c.commenterRole ? ` &middot; ${escapeHtml(c.commenterRole)}` : ''}</p>
                     <p class="text-[10px] text-slate-400 mb-1">${c.createdAt ? new Date(c.createdAt).toLocaleString() : ''}</p>
-                    <p class="text-xs text-detroit-dark whitespace-pre-wrap">${escapeHtml(c.text)}</p>
+                    <p class="text-xs text-detroit-dark whitespace-pre-wrap">${c.text ? escapeHtml(c.text) : (c.hasPhoto ? '<span class="italic text-slate-400">(photo)</span>' : '')}</p>
                 </div>
             `).join('');
         }
