@@ -314,6 +314,10 @@ async function main() {
     // refuses to run two instances against the same profile directory at
     // once, so this needs your regular Chrome fully closed first.
     const usingRealProfile = !!args.userDataDir;
+    // Kept as its own handle (not chained off launch()) so the finally block
+    // below can close it: closing only the context leaves the browser
+    // process alive and the node process -- and the CI step -- hangs forever.
+    const browser = usingRealProfile ? null : await chromium.launch({ headless: !args.headed, channel: args.channel });
     const context = usingRealProfile
         ? await chromium.launchPersistentContext(path.resolve(args.userDataDir), {
             headless: !args.headed,
@@ -324,7 +328,7 @@ async function main() {
             // to anything this script does) every ~20s past that point.
             timeout: 300000,
         })
-        : await (await chromium.launch({ headless: !args.headed, channel: args.channel })).newContext(
+        : await browser.newContext(
             args.storageState ? { storageState: path.resolve(args.storageState) } : {}
         );
     const page = usingRealProfile ? (context.pages()[0] || await context.newPage()) : await context.newPage();
@@ -409,6 +413,7 @@ async function main() {
         }
     } finally {
         await context.close();
+        if (browser) await browser.close();
     }
 
     if (stopBatch) {

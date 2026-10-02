@@ -21,6 +21,11 @@ on:
 jobs:
   submit:
     runs-on: ubuntu-latest
+    # Never burn 6h of runner time on a hung browser again -- a healthy run
+    # finishes in a few minutes (cf. the 2026-10-02 hang: the script stopped
+    # early on a Cloudflare check but the step sat idle for hours because the
+    # browser was never closed).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
