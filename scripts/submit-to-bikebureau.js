@@ -417,8 +417,13 @@ async function main() {
     }
 
     if (stopBatch) {
-        console.log(`\nStopped early: ${processed}/${snapshot.size} submitted this run before ${stopReason}. The rest are still 'pending' -- just re-run this script to pick up where it left off.`);
-        process.exitCode = 2;
+        const stopMsg = `Stopped early: ${processed}/${snapshot.size} submitted this run before ${stopReason}. The rest are still 'pending' -- just re-run this script to pick up where it left off.`;
+        console.log(`\n${stopMsg}`);
+        // Deliberate early stop (e.g. the Cloudflare check), not a malfunction:
+        // surface it as a run annotation instead of failing the run, so the
+        // twice-daily scheduled runs don't send a failure alert every time the
+        // check appears. Genuine errors still exit non-zero via the catch below.
+        console.log(`::warning::${stopMsg}`);
     }
 }
 
