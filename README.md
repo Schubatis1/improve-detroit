@@ -40,6 +40,27 @@ git history keeps it even after it's removed from the current files. Generate
 a replacement at the provider, put the new value in the Vercel variable
 above, and revoke the old one.
 
+## Machine API (`api/mcp.js`)
+
+A narrow server-side API for the pi-bridge MCP server, so an assistant can check reports and the Bike Lane
+Uprising / Bike Bureau mirror status without driving the web UI or reading Firestore directly. It is separate
+from `api/proxy.js` (which only accepts a browser Firebase ID token).
+
+`POST /api/mcp` with `Authorization: Bearer <MCP_API_TOKEN>` and a JSON body `{ "action": ... }`:
+
+| Action | Params | Notes |
+| --- | --- | --- |
+| `list_reports` | `status?`, `bluStatus?`, `bikeBureauStatus?`, `since?`, `limit?` (1-100) | read-only; no photos or coordinates |
+| `get_report` | `issueId` | read-only |
+| `sync_status` | -- | read-only; counts per BLU / Bike Bureau status (e.g. `FAILED`) |
+| `trigger_sync` | `target` (`blu`/`bikebureau`), `dry_run` (default `true`) | dispatches the existing GitHub workflow only when `dry_run` is explicitly `false` |
+
+There is intentionally no action that files a new report with the City.
+
+Extra Vercel env vars: `MCP_API_TOKEN` (long random shared secret), `FIREBASE_SERVICE_ACCOUNT_JSON`
+(service account with read access to Firestore; it is used only by this function). `GITHUB_ACTIONS_TOKEN` is
+shared with the existing Sync menu. Tests: `test/api.mcp.test.js`.
+
 ## Tests
 
 `npm install` then:
