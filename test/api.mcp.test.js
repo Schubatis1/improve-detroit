@@ -8,24 +8,44 @@ const DOCS = [
     { id: '103', data: { submittedAt: '2026-10-09T10:00:00Z', address: 'C St', status: 'Closed', bluStatus: 'submitted', bikeBureauStatus: 'submitted' } },
 ];
 
-function fakeCollection(filters = []) {
+// Records of everything the submit actions write, for assertions.
+const WRITES = [];
+const UPDATES = [];
+const STORAGE_SAVES = [];
+
+function fakeCollection(filters = [], name = 'history') {
     const rows = () => DOCS.filter((d) => filters.every(([f, v]) => d.data[f] === v));
     return {
-        where: (f, op, v) => fakeCollection([...filters, [f, v]]),
+        where: (f, op, v) => fakeCollection([...filters, [f, v]], name),
         limit: () => ({ get: async () => ({ docs: rows().map((d) => ({ id: d.id, data: () => d.data })) }) }),
         get: async () => ({ size: rows().length, docs: rows().map((d) => ({ id: d.id, data: () => d.data })) }),
-        doc: (id) => ({ get: async () => { const d = DOCS.find((x) => x.id === id); return { exists: !!d, id, data: () => d && d.data }; } }),
+        doc: (id) => ({
+            _collection: name,
+            _id: id,
+            get: async () => { const d = DOCS.find((x) => x.id === id); return { exists: !!d, id, data: () => d && d.data }; },
+            update: async (fields) => { UPDATES.push({ collection: name, id, fields }); },
+        }),
     };
 }
 
 const authObj = { getUserByEmail: vi.fn(async () => ({ uid: 'uid1' })) };
-const fsObj = { collection: () => ({ doc: () => ({ collection: () => fakeCollection() }) }) };
+const fsObj = {
+    collection: () => ({ doc: () => ({ collection: (name) => fakeCollection([], name) }) }),
+    batch: () => {
+        const sets = [];
+        return {
+            set: (ref, data, opts) => sets.push({ ref, data, opts }),
+            commit: async () => { for (const s of sets) WRITES.push({ collection: s.ref._collection, id: s.ref._id, data: s.data, opts: s.opts }); },
+        };
+    },
+};
 const defineAdmin = (k, v) => Object.defineProperty(admin, k, { value: v, configurable: true, writable: true });
 defineAdmin('apps', []);
 defineAdmin('initializeApp', vi.fn((opts, name) => { const app = { name }; admin.apps.push(app); return app; }));
 defineAdmin('credential', { cert: vi.fn((x) => x) });
 defineAdmin('auth', vi.fn(() => authObj));
-defineAdmin('firestore', vi.fn(() => fsObj));
+defineAdmin('firestore', Object.assign(vi.fn(() => fsObj), { FieldValue: { arrayUnion: (v) => ({ __arrayUnion: [v] }) } }));
+defineAdmin('storage', vi.fn(() => ({ bucket: () => ({ file: (path) => ({ save: async (buf) => { STORAGE_SAVES.push({ path, bytes: buf.length }); } }) }) })));
 
 const handler = require('../api/mcp.js');
 
@@ -40,6 +60,9 @@ beforeEach(() => {
     process.env.FIREBASE_SERVICE_ACCOUNT_JSON = JSON.stringify({ project_id: 'p' });
     process.env.GITHUB_ACTIONS_TOKEN = 'gh-secret';
     global.fetch = vi.fn(async () => ({ status: 204 }));
+    WRITES.length = 0;
+    UPDATES.length = 0;
+    STORAGE_SAVES.length = 0;
 });
 
 describe('auth', () => {
@@ -97,5 +120,68 @@ describe('trigger_sync', () => {
         expect((await call({ action: 'trigger_sync', target: 'x' })).code).toBe(400);
         global.fetch = vi.fn(async () => ({ status: 403 }));
         expect((await call({ action: 'trigger_sync', target: 'blu', dry_run: false })).code).toBe(502);
+    });
+});
+
+describe('submit actions', () => {
+    const REPORT = {
+        photoBase64: Buffer.from('fake-jpeg-bytes').toString('base64'),
+        lat: 42.3374,
+        lng: -83.056,
+        address: '2301 Cass Ave',
+        summary: 'Vehicle Blocking Bike Lane',
+        description: 'Cars queued into the garage.',
+        plate: 'ABC 1234',
+    };
+
+    it('submit_report_suppressed is a dry run by default and touches nothing', async () => {
+        const r = await call({ action: 'submit_report_suppressed', ...REPORT });
+        expect(r.code).toBe(200);
+        expect(r.body).toMatchObject({ dry_run: true, submitted: false });
+        expect(r.body.plan.suppressed).toBe(true);
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(WRITES).toEqual([]);
+        expect(STORAGE_SAVES).toEqual([]);
+    });
+
+    it('submit_report_suppressed writes a Suppressed entry and never calls fetch (no SeeClickFix path)', async () => {
+        const r = await call({ action: 'submit_report_suppressed', ...REPORT, dry_run: false });
+        expect(r.code).toBe(200);
+        expect(r.body.submitted).toBe(true);
+        expect(r.body.issueId).toMatch(/^sup-\d+-[a-z0-9]+$/);
+        expect(global.fetch).not.toHaveBeenCalled();
+        const historyWrite = WRITES.find((w) => w.collection === 'history' && w.id === r.body.issueId);
+        expect(historyWrite.data).toMatchObject({ suppressed: true, status: 'Suppressed', link: null, bluStatus: 'awaiting-photo', plate: 'ABC 1234' });
+        expect(WRITES.some((w) => w.collection === 'plates')).toBe(true);
+        expect(STORAGE_SAVES).toEqual([{ path: `history/uid1/${r.body.issueId}.jpg`, bytes: 15 }]);
+        const upd = UPDATES.find((u) => u.collection === 'history' && u.id === r.body.issueId);
+        expect(upd.fields).toMatchObject({ bluStatus: 'pending', bikeBureauStatus: 'pending' });
+        expect(upd.fields.photoUrl).toContain(r.body.issueId);
+        expect(r.body).toMatchObject({ bluStatus: 'pending', bikeBureauStatus: 'pending' });
+    });
+
+    it('submit actions validate before writing anything', async () => {
+        expect((await call({ action: 'submit_report_suppressed', ...REPORT, photoBase64: '' })).code).toBe(400);
+        expect((await call({ action: 'submit_report_suppressed', ...REPORT, bluCategory: 'Nope' })).code).toBe(400);
+        expect((await call({ action: 'submit_report_suppressed', ...REPORT, category: 'other' })).code).toBe(400);
+        expect(WRITES).toEqual([]);
+    });
+
+    it('submit_report_to_city is a dry run by default and files nothing', async () => {
+        process.env.SEECLICKFIX_TOKEN = 'scf-secret';
+        try {
+            const r = await call({ action: 'submit_report_to_city', ...REPORT });
+            expect(r.body).toMatchObject({ dry_run: true, submitted: false });
+            expect(r.body.plan.suppressed).toBe(false);
+            expect(global.fetch).not.toHaveBeenCalled();
+            expect(WRITES).toEqual([]);
+        } finally {
+            delete process.env.SEECLICKFIX_TOKEN;
+        }
+    });
+
+    it('get_report accepts suppressed ids (404, not 400) and still rejects junk', async () => {
+        expect((await call({ action: 'get_report', issueId: 'sup-1234567890-abc123' })).code).toBe(404);
+        expect((await call({ action: 'get_report', issueId: 'sup-x' })).code).toBe(400);
     });
 });
